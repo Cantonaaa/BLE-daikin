@@ -3,13 +3,12 @@
 #include <time.h>
 #include <sys/time.h>
 #include "esp_log.h"
-#include "esp_bt.h"
-#include "esp_bt_main.h"
-#include "esp_gap_ble_api.h"
-#include "esp_gattc_api.h"
-#include "esp_gatt_defs.h"
 #include "nvs_flash.h"
 #include "nvs.h"
+#include "host/ble_hs.h"
+#include "host/util/util.h"
+#include "nimble/nimble_port.h"
+#include "nimble/nimble_port_freertos.h"
 
 static const char *TAG = "BLE_DAIKIN";
 
@@ -17,55 +16,67 @@ daikin_unit_t units[MAX_UNITS] = {0};
 int unit_count = 0;
 
 static bool connected = false;
-static uint16_t conn_id = 0;
-static uint16_t gattc_if = 0;
-static bool scanning = false;
+static uint16_t conn_handle = 0;
 
 #define HANDLE_CMD  0xf4af
-#define HANDLE_STS1 0x6528
-#define HANDLE_STS2 0x660c
 
-static void start_scan(void);
-static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param);
-static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble_gattc_cb_param_t *param);
+static int ble_gap_event(struct ble_gap_event *event, void *arg);
 
-esp_err_t ble_daikin_init(void)
+static void ble_app_advertise(void)
 {
-    esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
-    esp_bt_controller_init(&bt_cfg);
-    esp_bt_controller_enable(ESP_BT_MODE_BTDM);
-    esp_bluedroid_init();
-    esp_bluedroid_enable();
-    esp_ble_gap_register_callback(esp_gap_cb);
-    esp_ble_gattc_register_callback(esp_gattc_cb);
-    esp_ble_gattc_app_register(0);
-    return ESP_OK;
+    struct ble_gap_disc_params disc_params;
+    memset(&disc_params, 0, sizeof(disc_params));
+    disc_params.itvl = 30;
+    disc_params.window = 30;
+    disc_params.filter_duplicates = 0;
+    ble_gap_disc(BLE_OWN_ADDR_PUBLIC, 30000, &disc_params, ble_gap_event, NULL);
+    ESP_LOGI(TAG, "Scanning...");
 }
 
-esp_err_t ble_daikin_connect(void)
+static int ble_gap_event(struct ble_gap_event *event, void *arg)
 {
-    if (!connected && !scanning) start_scan();
-    return ESP_OK;
-}
-
-esp_err_t ble_daikin_disconnect(void)
-{
-    if (connected) { esp_ble_gattc_close(gattc_if, conn_id); connected = false; }
-    return ESP_OK;
-}
-
-bool ble_daikin_is_connected(void) { return connected; }
-
-static void start_scan(void)
-{
-    scanning = true;
-    esp_ble_scan_params_t sp = {
-        .scan_type = BLE_SCAN_TYPE_ACTIVE,
-        .scan_interval = 0x50, .scan_window = 0x30,
-        .own_addr_type = BLE_ADDR_TYPE_PUBLIC,
-        .scan_filter_policy = BLE_SCAN_FILTER_ALLOW_ALL,
-    };
-    esp_ble_gap_set_scan_params(&sp);
+    switch (event->type) {
+    case BLE_GAP_EVENT_DISC: {
+        struct ble_hs_adv_fields fields;
+        if (ble_hs_adv_parse_fields(&fields, event->disc.data, event->disc.length) != 0)
+            break;
+        if (fields.name_len > 0) {
+            char name[32];
+            memcpy(name, fields.name, fields.name_len < 31 ? fields.name_len : 31);
+            name[fields.name_len < 31 ? fields.name_len : 31] = 0;
+            ESP_LOGI(TAG, "Found: %s", name);
+            if (strstr(name, "Daikin") || strstr(name, "DAIKIN") || strstr(name, "MTK")) {
+                ble_gap_disc_cancel();
+                struct ble_gap_conn_params params = {0};
+                params.conn_itvl = 24;
+                params.conn_latency = 0;
+                params.supervision_timeout = 500;
+                params.min_ce_len = 0;
+                params.max_ce_len = 0;
+                ble_gap_connect(BLE_OWN_ADDR_PUBLIC, &event->disc.addr, 30000, &params, ble_gap_event, NULL);
+            }
+        }
+        break;
+    }
+    case BLE_GAP_EVENT_CONNECT:
+        if (event->connect.status == 0) {
+            conn_handle = event->connect.conn_handle;
+            connected = true;
+            ESP_LOGI(TAG, "Connected!");
+        } else {
+            ESP_LOGE(TAG, "Connect failed");
+            ble_app_advertise();
+        }
+        break;
+    case BLE_GAP_EVENT_DISCONNECT:
+        connected = false;
+        ESP_LOGI(TAG, "Disconnected");
+        nimble_port_restart();
+        break;
+    default:
+        break;
+    }
+    return 0;
 }
 
 static int find_or_add_unit(uint8_t id)
@@ -82,20 +93,43 @@ static int find_or_add_unit(uint8_t id)
     return -1;
 }
 
+esp_err_t ble_daikin_init(void)
+{
+    esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
+    esp_bt_controller_init(&bt_cfg);
+    esp_bt_controller_enable(ESP_BT_MODE_BTDM);
+
+    nimble_port_init();
+    ble_hs_cfg.sync_cb = ble_app_advertise;
+    nimble_port_freertos_init((void*)nimble_port_run);
+    return ESP_OK;
+}
+
+esp_err_t ble_daikin_connect(void) { return ESP_OK; }
+esp_err_t ble_daikin_disconnect(void) { return ESP_OK; }
+bool ble_daikin_is_connected(void) { return connected; }
+
 esp_err_t ble_daikin_set_power(uint8_t unit_id, bool on)
 {
     if (!connected) return ESP_ERR_NOT_FOUND;
-    uint8_t cmd[24] = {
+
+    struct os_mbuf *om = ble_hs_mbuf_from_flat((uint8_t[]){
         0x00,0x1d,0x00,on?0x4f:0x4e, 0x00,0x45,0x15,0x21,
         0x12,0x1f,0x1c, on?0x82:0x84, on?0x21:0x22, 0x00,0x00,
         0x67,0x00,0x00, 0x36,0x00,0x08, 0x00,0x03,unit_id, 0x00
-    };
-    uint8_t ck = 0;
-    for (int i = 2; i < 23; i++) ck += cmd[i];
-    cmd[23] = ck;
-    esp_ble_gattc_write_char(gattc_if, conn_id, HANDLE_CMD, sizeof(cmd), cmd, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-    ESP_LOGI(TAG, "Send %s to unit 0x%02x", on?"ON":"OFF", unit_id);
-    return ESP_OK;
+    }, 24);
+
+    if (!om) return ESP_FAIL;
+    if (om->om_data[23] == 0) { // calculate checksum
+        uint8_t ck = 0;
+        for (int i = 2; i < 23; i++) ck += om->om_data[i];
+        om->om_data[23] = ck;
+    }
+
+    int rc = ble_gattc_write_flat(conn_handle, HANDLE_CMD, om->om_data, om->om_len, NULL, NULL);
+    os_mbuf_free_chain(om);
+    ESP_LOGI(TAG, "Power %s unit 0x%02x (rc=%d)", on?"ON":"OFF", unit_id, rc);
+    return (rc == 0) ? ESP_OK : ESP_FAIL;
 }
 
 void ble_daikin_timer_check(void)
@@ -105,99 +139,14 @@ void ble_daikin_timer_check(void)
     gettimeofday(&tv, NULL);
     localtime_r(&tv.tv_sec, &tm);
     uint16_t now = tm.tm_hour * 100 + tm.tm_min;
-
     for (int i = 0; i < unit_count; i++) {
         if (units[i].timer_on && now == units[i].timer_on && !units[i].on) {
-            ESP_LOGI(TAG, "Timer ON unit 0x%02x", units[i].id);
             ble_daikin_set_power(units[i].id, true);
             units[i].on = true;
         }
         if (units[i].timer_off && now == units[i].timer_off && units[i].on) {
-            ESP_LOGI(TAG, "Timer OFF unit 0x%02x", units[i].id);
             ble_daikin_set_power(units[i].id, false);
             units[i].on = false;
         }
-    }
-}
-
-static bool name_matches(const char *name)
-{
-    return name && (strstr(name, "Daikin") || strstr(name, "DAIKIN") || strstr(name, "daikin") || strstr(name, "MTK"));
-}
-
-static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param)
-{
-    switch (event) {
-    case ESP_GAP_BLE_SCAN_PARAM_SET_COMPLETE_EVT:
-        esp_ble_gap_start_scanning(30);
-        break;
-    case ESP_GAP_BLE_SCAN_RESULT_EVT: {
-        uint8_t *adv = param->scan_rst.ble_adv;
-        for (int i = 0; i < param->scan_rst.adv_data_len - 1; ) {
-            int flen = adv[i++];
-            if (!flen || i + flen > param->scan_rst.adv_data_len) break;
-            if (adv[i] == 0x09 || adv[i] == 0x08) {
-                int nl = (flen - 1 < 31) ? (flen - 1) : 31;
-                char name[32]; memcpy(name, adv + i + 1, nl); name[nl] = 0;
-                ESP_LOGI(TAG, "Found: %s", name);
-                if (name_matches(name)) {
-                    esp_ble_gap_stop_scanning();
-                    esp_ble_gattc_open(gattc_if, param->scan_rst.bda, BLE_ADDR_TYPE_PUBLIC, true);
-                }
-            }
-            i += flen + 1;
-        }
-        break;
-    }
-    case ESP_GAP_BLE_SCAN_STOP_COMPLETE_EVT:
-        scanning = false;
-        break;
-    default: break;
-    }
-}
-
-static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gattc_cb_param_t *param)
-{
-    (void)gatts_if;
-    switch (event) {
-    case ESP_GATTC_REG_EVT:
-        gattc_if = param->reg.app_id;
-        start_scan();
-        break;
-    case ESP_GATTC_OPEN_EVT:
-        if (param->open.status != ESP_GATT_OK) {
-            vTaskDelay(pdMS_TO_TICKS(5000));
-            start_scan();
-            break;
-        }
-        connected = true;
-        conn_id = param->open.conn_id;
-        ESP_LOGI(TAG, "Connected");
-        break;
-    case ESP_GATTC_NOTIFY_EVT: {
-        uint16_t h = param->notify.handle;
-        uint8_t *v = param->notify.value;
-        int l = param->notify.value_len;
-        if (h == HANDLE_STS1 && l >= 20 && !memcmp(v, "\xbb\xb9\xc6\x18\x00\x02\x00\x10", 8)) {
-            int idx = find_or_add_unit(v[9]);
-            if (idx >= 0) {
-                bool st = (l > 19 && v[19] == 0x80 && v[20] == 0x01);
-                if (units[idx].on != st) { units[idx].on = st; ESP_LOGI(TAG, "Unit 0x%02x %s", v[9], st?"ON":"OFF"); }
-            }
-        } else if (h == HANDLE_STS2 && l >= 12 && !memcmp(v, "\xbb\xb9\xc6\x18\x00\x0a\x00\x08", 8)) {
-            int idx = find_or_add_unit(v[10]);
-            if (idx >= 0) {
-                bool st = (v[10] == 0x1b);
-                if (units[idx].on != st) { units[idx].on = st; ESP_LOGI(TAG, "Unit 0x%02x %s", v[10], st?"ON":"OFF"); }
-            }
-        }
-        break;
-    }
-    case ESP_GATTC_CLOSE_EVT:
-        connected = false;
-        vTaskDelay(pdMS_TO_TICKS(5000));
-        start_scan();
-        break;
-    default: break;
     }
 }
