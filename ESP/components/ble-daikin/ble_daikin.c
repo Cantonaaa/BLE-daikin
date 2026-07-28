@@ -1,6 +1,7 @@
 #include "ble_daikin.h"
 #include <string.h>
 #include <time.h>
+#include <sys/time.h>
 #include "esp_log.h"
 #include "esp_bt.h"
 #include "esp_bt_main.h"
