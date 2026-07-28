@@ -222,6 +222,61 @@ static esp_err_t timer_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+static esp_err_t wifi_scan_handler(httpd_req_t *req)
+{
+    uint16_t count = 20;
+    wifi_ap_record_t records[20];
+    esp_wifi_scan_start(NULL, true);
+    esp_wifi_scan_get_ap_records(&count, records);
+
+    cJSON *root = cJSON_CreateArray();
+    for (int i = 0; i < count && i < 20; i++) {
+        cJSON *ap = cJSON_CreateObject();
+        cJSON_AddStringToObject(ap, "ssid", (char*)records[i].ssid);
+        cJSON_AddNumberToObject(ap, "rssi", records[i].rssi);
+        cJSON_AddNumberToObject(ap, "auth", records[i].authmode);
+        cJSON_AddItemToArray(root, ap);
+    }
+    char *json = cJSON_PrintUnformatted(root);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, json, strlen(json));
+    free(json);
+    cJSON_Delete(root);
+    return ESP_OK;
+}
+
+static esp_err_t wifi_config_handler(httpd_req_t *req)
+{
+    char buf[128];
+    if (httpd_req_get_url_query_str(req, buf, sizeof(buf)) == ESP_OK) {
+        char ssid[64], pass[64];
+        if (httpd_query_key_value(buf, "ssid", ssid, sizeof(ssid)) == ESP_OK &&
+            httpd_query_key_value(buf, "pass", pass, sizeof(pass)) == ESP_OK) {
+            save_wifi_and_restart(ssid, pass);
+        }
+    }
+    httpd_resp_sendstr(req, "{\"ok\":1}");
+    return ESP_OK;
+}
+
+static esp_err_t wifi_status_handler(httpd_req_t *req)
+{
+    wifi_ap_record_t ap;
+    bool connected = (esp_wifi_sta_get_ap_info(&ap) == ESP_OK);
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "connected", connected);
+    if (connected) {
+        cJSON_AddStringToObject(root, "ssid", (char*)ap.ssid);
+        cJSON_AddNumberToObject(root, "rssi", ap.rssi);
+    }
+    char *json = cJSON_PrintUnformatted(root);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, json, strlen(json));
+    free(json);
+    cJSON_Delete(root);
+    return ESP_OK;
+}
+
 esp_err_t daikin_web_init(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
@@ -239,6 +294,12 @@ esp_err_t daikin_web_init(void)
     httpd_register_uri_handler(server, &n);
     httpd_uri_t m = {.uri = "/api/timer", .method = HTTP_GET, .handler = timer_handler};
     httpd_register_uri_handler(server, &m);
+    httpd_uri_t ws = {.uri = "/api/wifi/scan", .method = HTTP_GET, .handler = wifi_scan_handler};
+    httpd_register_uri_handler(server, &ws);
+    httpd_uri_t wc = {.uri = "/api/wifi/connect", .method = HTTP_GET, .handler = wifi_config_handler};
+    httpd_register_uri_handler(server, &wc);
+    httpd_uri_t wst = {.uri = "/api/wifi/status", .method = HTTP_GET, .handler = wifi_status_handler};
+    httpd_register_uri_handler(server, &wst);
     ESP_LOGI(TAG, "Web started");
     return ESP_OK;
 }
