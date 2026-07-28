@@ -6,7 +6,6 @@
 #include "esp_gap_ble_api.h"
 #include "esp_gattc_api.h"
 #include "esp_gatt_defs.h"
-#include "esp_bt_defs.h"
 
 static const char *TAG = "BLE_DAIKIN";
 
@@ -16,22 +15,12 @@ int unit_count = 0;
 static bool connected = false;
 static uint16_t conn_id = 0;
 static uint16_t gattc_if = 0;
-static esp_bd_addr_t remote_bda = {0};
+static bool scanning = false;
+static uint16_t handle_cmd = 0;
 
-static uint16_t handle_command = 0;
-static uint16_t handle_status = 0;
-
-#define BLE_SCAN_DURATION 10
-#define REMOTE_SERVICE_UUID 0x1800
-#define REMOTE_CHAR_UUID 0x2A00
-
+static void start_scan(void);
 static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param);
 static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble_gattc_cb_param_t *param);
-
-static void start_scan(void)
-{
-    esp_ble_gap_start_scanning(BLE_SCAN_DURATION);
-}
 
 esp_err_t ble_daikin_init(void)
 {
@@ -40,19 +29,15 @@ esp_err_t ble_daikin_init(void)
     esp_bt_controller_enable(ESP_BT_MODE_BTDM);
     esp_bluedroid_init();
     esp_bluedroid_enable();
-
     esp_ble_gap_register_callback(esp_gap_cb);
     esp_ble_gattc_register_callback(esp_gattc_cb);
     esp_ble_gattc_app_register(0);
-
     return ESP_OK;
 }
 
 esp_err_t ble_daikin_connect(void)
 {
-    if (!connected) {
-        start_scan();
-    }
+    if (!connected && !scanning) start_scan();
     return ESP_OK;
 }
 
@@ -65,57 +50,84 @@ esp_err_t ble_daikin_disconnect(void)
     return ESP_OK;
 }
 
-bool ble_daikin_is_connected(void)
+bool ble_daikin_is_connected(void) { return connected; }
+
+static void start_scan(void)
 {
-    return connected;
+    scanning = true;
+    esp_ble_scan_params_t sp = {
+        .scan_type = BLE_SCAN_TYPE_ACTIVE,
+        .own_addr_type = BLE_ADDR_TYPE_PUBLIC,
+        .scan_filter_policy = BLE_SCAN_FILTER_ALLOW_ALL,
+        .scan_interval = 0x50,
+        .scan_window = 0x30,
+    };
+    esp_ble_gap_set_scan_params(&sp);
 }
 
 esp_err_t ble_daikin_set_power(uint8_t unit_id, bool on)
 {
-    if (!connected) {
+    if (!connected || !handle_cmd)
         return ESP_ERR_NOT_FOUND;
-    }
 
-    uint8_t cmd[] = {
+    uint8_t cmd[24] = {
         0x00, 0x1d, 0x00, on ? 0x4f : 0x4e,
         0x00, 0x45, 0x15, 0x21, 0x12, 0x1f, 0x1c,
-        0x84, 0x22, 0x00, 0x00,
+        on ? 0x82 : 0x84, on ? 0x21 : 0x22, 0x00, 0x00,
         0x67, 0x00, 0x00,
         0x36, 0x00, 0x08,
         0x00, 0x03, unit_id,
         0x00
     };
+    uint8_t ck = 0;
+    for (int i = 2; i < (int)sizeof(cmd) - 1; i++) ck += cmd[i];
+    cmd[sizeof(cmd) - 1] = ck;
 
-    uint8_t checksum = 0;
-    for (int i = 2; i < sizeof(cmd) - 1; i++) {
-        checksum += cmd[i];
-    }
-    cmd[sizeof(cmd) - 1] = checksum;
-
-    esp_ble_gattc_write_char(gattc_if, conn_id, handle_command, sizeof(cmd), cmd, ESP_GATT_WRITE_TYPE_RSP);
-    ESP_LOGI(TAG, "Sending power %s to unit %d", on ? "ON" : "OFF", unit_id);
+    esp_ble_gattc_write_char(gattc_if, conn_id, handle_cmd, sizeof(cmd), cmd, ESP_GATT_WRITE_TYPE_RSP);
+    ESP_LOGI(TAG, "Power %s unit %d", on ? "ON" : "OFF", unit_id);
     return ESP_OK;
+}
+
+static bool name_matches(const char *name)
+{
+    if (!name || !name[0]) return false;
+    return (strstr(name, "Daikin") || strstr(name, "DAIKIN") ||
+            strstr(name, "daikin") || strstr(name, "MTK") ||
+            strstr(name, "mtk"));
 }
 
 static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param)
 {
     switch (event) {
     case ESP_GAP_BLE_SCAN_PARAM_SET_COMPLETE_EVT:
-        start_scan();
+        esp_ble_gap_start_scanning(30);
         break;
     case ESP_GAP_BLE_SCAN_START_COMPLETE_EVT:
-        ESP_LOGI(TAG, "Scan started");
+        ESP_LOGI(TAG, "Scanning...");
         break;
     case ESP_GAP_BLE_SCAN_RESULT_EVT: {
-        auto *r = &param->scan_rst;
-        if (r->evt_type == ESP_BLE_EVT_CONN_ADV || r->evt_type == ESP_BLE_EVT_NON_CONN_ADV) {
-            char name[32] = {0};
-            memcpy(name, r->ble_adv, r->adv_data_len > 31 ? 31 : r->adv_data_len);
-            ESP_LOGI(TAG, "Found device: %s", name);
+        uint8_t *adv = param->scan_rst.ble_adv;
+        int len = param->scan_rst.adv_data_len;
+        for (int i = 0; i < len - 1; ) {
+            int flen = adv[i++];
+            if (flen == 0 || i + flen > len) break;
+            if (adv[i] == 0x09 || adv[i] == 0x08) {
+                char name[32];
+                int nl = (flen - 1 < 31) ? (flen - 1) : 31;
+                memcpy(name, adv + i + 1, nl);
+                name[nl] = 0;
+                ESP_LOGI(TAG, "Found: %s", name);
+                if (name_matches(name)) {
+                    esp_ble_gap_stop_scanning();
+                    esp_ble_gattc_open(gattc_if, param->scan_rst.bda, BLE_ADDR_TYPE_PUBLIC, true);
+                }
+            }
+            i += flen + 1;
         }
         break;
     }
     case ESP_GAP_BLE_SCAN_STOP_COMPLETE_EVT:
+        scanning = false;
         ESP_LOGI(TAG, "Scan stopped");
         break;
     default:
@@ -123,34 +135,62 @@ static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *par
     }
 }
 
+static void discover_handles(void)
+{
+    esp_ble_gattc_search_service(gattc_if, conn_id, NULL);
+}
+
 static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble_gattc_cb_param_t *param)
 {
     switch (event) {
     case ESP_GATTC_REG_EVT:
-        gattc_if = gattc_if;
-        ESP_LOGI(TAG, "GATTC registered");
+        gattc_if = param->reg.app_id;
         start_scan();
         break;
     case ESP_GATTC_OPEN_EVT:
+        if (param->open.status != ESP_GATT_OK) {
+            ESP_LOGE(TAG, "Connect failed");
+            vTaskDelay(pdMS_TO_TICKS(5000));
+            start_scan();
+            break;
+        }
         connected = true;
         conn_id = param->open.conn_id;
-        ESP_LOGI(TAG, "Connected");
-        esp_ble_gattc_search_service(gattc_if, conn_id, NULL);
+        ESP_LOGI(TAG, "Connected to Daikin");
+        discover_handles();
         break;
-    case ESP_GATTC_SEARCH_RES_EVT:
-        if (param->search_res.srvc_id.uuid.uuid16 == 0xFFE0) {
-            ESP_LOGI(TAG, "Found Daikin service");
-            esp_ble_gattc_get_char_by_uuid(gattc_if, conn_id, param->search_res.start_handle,
-                param->search_res.end_handle, param->search_res.srvc_id.uuid.uuid16, &param->search_res.srvc_id);
+    case ESP_GATTC_SEARCH_RES_EVT: {
+        uint16_t sh = param->search_res.start_handle;
+        uint16_t eh = param->search_res.end_handle;
+        ESP_LOGD(TAG, "Service: 0x%04x-0x%04x", sh, eh);
+        for (uint16_t h = sh; h <= eh; h++) {
+            esp_ble_gattc_get_char_by_handle(gattc_if, conn_id, h, ESP_GATT_DB_ALL);
         }
         break;
-    case ESP_GATTC_GET_CHAR_EVT:
-        handle_command = param->get_char.char_handle;
-        ESP_LOGI(TAG, "Found char handle: 0x%04x", handle_command);
+    }
+    case ESP_GATTC_SEARCH_CMPL_EVT:
+        ESP_LOGI(TAG, "Discovery complete");
+        if (!handle_cmd) {
+            ESP_LOGW(TAG, "Command handle not found, using default 0xf4af");
+            handle_cmd = 0xf4af;
+        }
+        break;
+    case ESP_GATTC_GET_CHAR_EVT: {
+        uint16_t h = param->get_char.char_handle;
+        if (h == 0xf4af) {
+            handle_cmd = h;
+            ESP_LOGI(TAG, "Found command handle 0xf4af");
+        }
+        break;
+    }
+    case ESP_GATTC_WRITE_CHAR_EVT:
+        ESP_LOGD(TAG, "Write complete status=%d", param->write.status);
         break;
     case ESP_GATTC_CLOSE_EVT:
         connected = false;
-        ESP_LOGI(TAG, "Disconnected");
+        ESP_LOGI(TAG, "Disconnected, reconnecting...");
+        vTaskDelay(pdMS_TO_TICKS(5000));
+        start_scan();
         break;
     default:
         break;
