@@ -39,10 +39,10 @@ static void sntp_init_cb(struct timeval *tv)
 
 static void start_sntp(void)
 {
-    sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    sntp_setservername(0, "pool.ntp.org");
+    esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    esp_sntp_setservername(0, "pool.ntp.org");
     sntp_set_time_sync_notification_cb(sntp_init_cb);
-    sntp_init();
+    esp_sntp_init();
 }
 
 static void ble_task(void *arg)
