@@ -1,0 +1,12 @@
+# ESP-IDF build
+ESP/build/
+ESP/sdkconfig
+ESP/sdkconfig.old
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
