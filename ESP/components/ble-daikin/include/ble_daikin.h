@@ -1,6 +1,7 @@
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
+#include "esp_err.h"
 
 #define MAX_UNITS 8
 
