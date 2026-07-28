@@ -135,6 +135,50 @@ static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *par
     }
 }
 
+static int find_or_add_unit(uint8_t id)
+{
+    for (int i = 0; i < unit_count; i++)
+        if (units[i].id == id) return i;
+    if (unit_count < MAX_UNITS) {
+        int idx = unit_count++;
+        units[idx].id = id;
+        snprintf(units[idx].name, sizeof(units[idx].name), "Unit %d", id);
+        ESP_LOGI(TAG, "Discovered unit %d (id=0x%02x)", unit_count, id);
+        return idx;
+    }
+    return -1;
+}
+
+static void handle_unit_status_6528(const uint8_t *data, int len)
+{
+    if (len < 20 || memcmp(data, "\xbb\xb9\xc6\x18\x00\x02\x00\x10", 8))
+        return;
+    uint8_t uid = data[9];
+    int idx = find_or_add_unit(uid);
+    if (idx >= 0) {
+        bool state = (len > 19 && data[19] == 0x80 && data[20] == 0x01);
+        if (units[idx].on != state) {
+            units[idx].on = state;
+            ESP_LOGI(TAG, "Unit 0x%02x %s", uid, state ? "ON" : "OFF");
+        }
+    }
+}
+
+static void handle_unit_status_660c(const uint8_t *data, int len)
+{
+    if (len < 12 || memcmp(data, "\xbb\xb9\xc6\x18\x00\x0a\x00\x08", 8))
+        return;
+    uint8_t uid = data[10];
+    int idx = find_or_add_unit(uid);
+    if (idx >= 0) {
+        bool state = (uid == 0x1b);
+        if (units[idx].on != state) {
+            units[idx].on = state;
+            ESP_LOGI(TAG, "Unit 0x%02x %s", uid, state ? "ON" : "OFF");
+        }
+    }
+}
+
 static void discover_handles(void)
 {
     esp_ble_gattc_search_service(gattc_if, conn_id, NULL);
@@ -180,7 +224,29 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
         if (h == 0xf4af) {
             handle_cmd = h;
             ESP_LOGI(TAG, "Found command handle 0xf4af");
+            esp_ble_gattc_reg_for_notify(gattc_if, conn_id, h);
         }
+        if (h == 0x6528) {
+            ESP_LOGI(TAG, "Found status handle 0x6528");
+            esp_ble_gattc_reg_for_notify(gattc_if, conn_id, h);
+        }
+        if (h == 0x660c) {
+            ESP_LOGI(TAG, "Found status handle 0x660c");
+            esp_ble_gattc_reg_for_notify(gattc_if, conn_id, h);
+        }
+        break;
+    }
+    case ESP_GATTC_REG_FOR_NOTIFY_EVT: {
+        uint16_t h = param->reg_for_notify.handle;
+        ESP_LOGI(TAG, "Registered for notify on 0x%04x", h);
+        break;
+    }
+    case ESP_GATTC_NOTIFY_EVT: {
+        uint16_t h = param->notify.handle;
+        if (h == 0x6528)
+            handle_unit_status_6528(param->notify.value, param->notify.value_len);
+        if (h == 0x660c)
+            handle_unit_status_660c(param->notify.value, param->notify.value_len);
         break;
     }
     case ESP_GATTC_WRITE_CHAR_EVT:
