@@ -7,6 +7,7 @@
 #include "cJSON.h"
 #include "nvs_flash.h"
 #include "nvs.h"
+#include "esp_netif.h"
 
 static const char *TAG = "DAIKIN_WEB";
 static httpd_handle_t server = NULL;
@@ -42,7 +43,7 @@ static const char *WEB_HTML =
     "<script>"
     "async function load(){"
     "let r=await fetch('/api/status');let d=await r.json();"
-    "document.getElementById('conn').textContent=d.connected?'Connected':'Disconnected';"
+    "document.getElementById('conn').textContent=d.connected?'Connected'+(d.ip?' • '+d.ip:''):'Disconnected';"
     "document.getElementById('dot').className='status-dot '+(d.connected?'on':'off');"
     "let h='';"
     "for(let u of d.units){"
@@ -136,6 +137,17 @@ static esp_err_t status_handler(httpd_req_t *req)
 {
     cJSON *root = cJSON_CreateObject();
     cJSON_AddBoolToObject(root, "connected", ble_daikin_is_connected());
+
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (netif) {
+        esp_netif_ip_info_t ip;
+        if (esp_netif_get_ip_info(netif, &ip) == ESP_OK) {
+            char ip_str[16];
+            snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip.ip));
+            cJSON_AddStringToObject(root, "ip", ip_str);
+        }
+    }
+
     cJSON *arr = cJSON_AddArrayToObject(root, "units");
     for (int i = 0; i < unit_count; i++) {
         cJSON *u = cJSON_CreateObject();
