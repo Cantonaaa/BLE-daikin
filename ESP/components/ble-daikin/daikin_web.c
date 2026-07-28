@@ -119,10 +119,10 @@ void daikin_web_load_nvs(void)
     load_names_nvs();
 }
 
-static void fmt_time(uint16_t t, char *buf)
+static void fmt_time(uint16_t t, char *buf, size_t len)
 {
     if (!t) { buf[0] = 0; return; }
-    snprintf(buf, 6, "%02d:%02d", t / 100, t % 100);
+    snprintf(buf, len, "%02d:%02d", t / 100, t % 100);
 }
 
 static esp_err_t root_handler(httpd_req_t *req)
@@ -142,11 +142,11 @@ static esp_err_t status_handler(httpd_req_t *req)
         cJSON_AddNumberToObject(u, "id", units[i].id);
         cJSON_AddBoolToObject(u, "on", units[i].on);
         cJSON_AddStringToObject(u, "name", units[i].name);
-        char buf[6];
-        fmt_time(units[i].timer_on, buf);
-        cJSON_AddStringToObject(u, "timer_on", buf);
-        fmt_time(units[i].timer_off, buf);
-        cJSON_AddStringToObject(u, "timer_off", buf);
+        char tbuf[8];
+        fmt_time(units[i].timer_on, tbuf, sizeof(tbuf));
+        cJSON_AddStringToObject(u, "timer_on", tbuf);
+        fmt_time(units[i].timer_off, tbuf, sizeof(tbuf));
+        cJSON_AddStringToObject(u, "timer_off", tbuf);
         cJSON_AddItemToArray(arr, u);
     }
     char *json = cJSON_PrintUnformatted(root);
