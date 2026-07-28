@@ -1,11 +1,14 @@
 #include "ble_daikin.h"
 #include <string.h>
+#include <time.h>
 #include "esp_log.h"
 #include "esp_bt.h"
 #include "esp_bt_main.h"
 #include "esp_gap_ble_api.h"
 #include "esp_gattc_api.h"
 #include "esp_gatt_defs.h"
+#include "nvs_flash.h"
+#include "nvs.h"
 
 static const char *TAG = "BLE_DAIKIN";
 
@@ -92,6 +95,28 @@ esp_err_t ble_daikin_set_power(uint8_t unit_id, bool on)
     esp_ble_gattc_write_char(gattc_if, conn_id, HANDLE_CMD, sizeof(cmd), cmd, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
     ESP_LOGI(TAG, "Send %s to unit 0x%02x", on?"ON":"OFF", unit_id);
     return ESP_OK;
+}
+
+void ble_daikin_timer_check(void)
+{
+    struct timeval tv;
+    struct tm tm;
+    gettimeofday(&tv, NULL);
+    localtime_r(&tv.tv_sec, &tm);
+    uint16_t now = tm.tm_hour * 100 + tm.tm_min;
+
+    for (int i = 0; i < unit_count; i++) {
+        if (units[i].timer_on && now == units[i].timer_on && !units[i].on) {
+            ESP_LOGI(TAG, "Timer ON unit 0x%02x", units[i].id);
+            ble_daikin_set_power(units[i].id, true);
+            units[i].on = true;
+        }
+        if (units[i].timer_off && now == units[i].timer_off && units[i].on) {
+            ESP_LOGI(TAG, "Timer OFF unit 0x%02x", units[i].id);
+            ble_daikin_set_power(units[i].id, false);
+            units[i].on = false;
+        }
+    }
 }
 
 static bool name_matches(const char *name)
