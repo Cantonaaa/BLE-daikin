@@ -57,6 +57,8 @@ void save_wifi_and_restart(const char *ssid, const char *pass)
     esp_restart();
 }
 
+static void start_ap(void);
+
 /* 启动 SNTP 时间同步（定时功能需要 NTP 时间） */
 static void start_sntp(void)
 {
