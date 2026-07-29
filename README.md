@@ -17,9 +17,22 @@
 
 ## 硬件要求
 
-- ESP32-S3 N16R8（16MB Flash / 8MB Octal PSRAM）
+- ESP32-S3（推荐 N16R8，其他型号也可适配）
 - USB 供电
 - 需要在大金室外机 BLE 信号范围内（约 10-20 米）
+
+### 硬件适配
+
+本固件默认配置为 **ESP32-S3 N16R8**（16MB Flash / 8MB Octal PSRAM）。其他型号需修改 `ESP/sdkconfig.defaults`：
+
+| 型号 | Flash | PSRAM | 修改方式 |
+|---|---|---|---|
+| **N16R8** | 16MB | 8MB Octal | ✅ 当前默认配置 |
+| **N8R2** | 8MB | 2MB Quad | `CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y`<br>`# CONFIG_SPIRAM_MODE_OCT is not set`<br>`CONFIG_SPIRAM_MODE_QUAD=y` |
+| **N4R2** | 4MB | 2MB Quad | `CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y`<br>`# CONFIG_SPIRAM_MODE_OCT is not set`<br>`CONFIG_SPIRAM_MODE_QUAD=y` |
+| **无 PSRAM** | 任意 | 无 | 删除所有 `CONFIG_SPIRAM*` 行 |
+
+> 分区表默认是 16MB（`partitions_16m.csv`），如果使用 4MB/8MB Flash 需自行创建对应大小的分区表。
 
 ## 快速开始
 
