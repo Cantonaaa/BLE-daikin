@@ -8,6 +8,7 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "esp_netif.h"
+#include "esp_wifi.h"
 
 static const char *TAG = "DAIKIN_WEB";
 static httpd_handle_t server = NULL;
