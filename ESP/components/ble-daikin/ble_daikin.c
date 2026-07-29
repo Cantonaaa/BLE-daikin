@@ -63,6 +63,7 @@ static void save_saved_addr(const uint8_t *addr)
 }
 
 static int ble_gap_event(struct ble_gap_event *event, void *arg);
+static int find_or_add_unit(uint8_t id);
 
 /*
  * GATT 特征值发现回调
@@ -216,7 +217,7 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg)
             // 获取并保存对方 BLE 地址（用于断线后自动重连）
             struct ble_gap_conn_desc conn_desc;
             if (ble_gap_conn_find(event->connect.conn_handle, &conn_desc) == 0) {
-                save_saved_addr(conn_desc.peer_addr.val);
+                save_saved_addr(conn_desc.peer_id_addr.val);
             }
             ESP_LOGI(TAG, "Connected, discovering services...");
             handle_cmd = 0;
