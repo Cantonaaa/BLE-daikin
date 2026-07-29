@@ -25,6 +25,9 @@ extern int unit_count;
 extern discovered_device_t discovered_devices[MAX_DEVICES];
 extern int discovered_count;
 
+void units_lock(void);
+void units_unlock(void);
+
 esp_err_t ble_daikin_init(void);
 esp_err_t ble_daikin_start_scan(void);
 esp_err_t ble_daikin_connect_to(int device_index);

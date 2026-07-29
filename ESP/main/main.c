@@ -21,6 +21,7 @@
 #include "lwip/netdb.h"
 #include "ble_daikin.h"
 #include "daikin_web.h"
+#include "voice_control.h"
 
 static const char *TAG = "MAIN";
 static int wifi_retry_count = 0;
@@ -244,6 +245,19 @@ static void timer_task(void *arg)
     while (1) { ble_daikin_timer_check(); vTaskDelay(pdMS_TO_TICKS(30000)); }
 }
 
+static int voice_units_getter(uint8_t *ids, char names[][32], int max)
+{
+    units_lock();
+    int cnt = unit_count < max ? unit_count : max;
+    for (int i = 0; i < cnt; i++) {
+        ids[i] = units[i].id;
+        strncpy(names[i], units[i].name, 31);
+        names[i][31] = 0;
+    }
+    units_unlock();
+    return cnt;
+}
+
 void app_main(void)
 {
     nvs_flash_init();
@@ -252,6 +266,10 @@ void app_main(void)
     ble_daikin_init();
     daikin_web_init();
     daikin_web_load_nvs();
+    voice_control_register_power_cb(ble_daikin_set_power);
+    voice_control_register_units_cb(voice_units_getter);
+    daikin_on_rename = voice_control_notify_rename;
+    voice_control_init();
 
     xTaskCreatePinnedToCore(ble_task, "ble", 4096, NULL, 5, NULL, 1);
     xTaskCreatePinnedToCore(timer_task, "tmr", 3072, NULL, 3, NULL, 0);

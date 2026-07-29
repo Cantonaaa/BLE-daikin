@@ -22,6 +22,7 @@
 
 static const char *TAG = "DAIKIN_WEB";
 static httpd_handle_t server = NULL;
+void (*daikin_on_rename)(void) = NULL;
 
 /*
  * Web 页面 HTML（内嵌 CSS + JavaScript）
@@ -335,6 +336,7 @@ static esp_err_t rename_handler(httpd_req_t *req)
                 if (units[i].id == id) {
                     strncpy(units[i].name, name, sizeof(units[i].name) - 1);
                     save_name_nvs(i);
+                    if (daikin_on_rename) daikin_on_rename();
                     break;
                 }
             }

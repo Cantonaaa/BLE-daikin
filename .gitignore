@@ -1,12 +1,13 @@
-# ESP-IDF build
-ESP/build/
-ESP/sdkconfig
-ESP/sdkconfig.old
-
-# IDE
+build/
+*.bin
+*~
 .vscode/
-.idea/
-
-# OS
-.DS_Store
-Thumbs.db
+__pycache__/
+*.pyc
+sdkconfig
+sdkconfig.old
+managed_components/
+reference/
+firmware/
+*.tar.gz
+dependencies.lock

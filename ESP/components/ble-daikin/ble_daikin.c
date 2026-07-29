@@ -5,6 +5,7 @@
 
 #include "ble_daikin.h"
 #include <string.h>
+#include <stdio.h>
 #include <time.h>
 #include <sys/time.h>
 #include "esp_log.h"
@@ -16,8 +17,15 @@
 #include "host/ble_gatt.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 static const char *TAG = "BLE_DAIKIN";
+
+static portMUX_TYPE units_mux = portMUX_INITIALIZER_UNLOCKED;
+
+void units_lock(void)   { taskENTER_CRITICAL(&units_mux); }
+void units_unlock(void) { taskEXIT_CRITICAL(&units_mux); }
 
 /* 分机列表（全局变量，Web 层通过 extern 访问） */
 daikin_unit_t units[MAX_UNITS] = {0};
@@ -239,9 +247,13 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg)
                 uint8_t uid = d[9];
                 bool st = (l > 15 && d[15] == 0x80 && d[16] == 0x01);
                 int idx = find_or_add_unit(uid);
-                if (idx >= 0 && units[idx].on != st) {
-                    units[idx].on = st;
-                    ESP_LOGI(TAG, "Unit 0x%02x %s", uid, st?"ON":"OFF");
+                if (idx >= 0) {
+                    units_lock();
+                    if (units[idx].on != st) {
+                        units[idx].on = st;
+                        ESP_LOGI(TAG, "Unit 0x%02x %s", uid, st?"ON":"OFF");
+                    }
+                    units_unlock();
                 }
             }
         }
@@ -265,15 +277,18 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg)
  */
 static int find_or_add_unit(uint8_t id)
 {
+    units_lock();
     for (int i = 0; i < unit_count; i++)
-        if (units[i].id == id) return i;
+        if (units[i].id == id) { units_unlock(); return i; }
     if (unit_count < MAX_UNITS) {
         int i = unit_count++;
         units[i].id = id;
         snprintf(units[i].name, sizeof(units[i].name), "Unit %d", id);
         ESP_LOGI(TAG, "Unit %d discovered (0x%02x)", unit_count, id);
+        units_unlock();
         return i;
     }
+    units_unlock();
     return -1;
 }
 
@@ -353,6 +368,7 @@ void ble_daikin_timer_check(void)
     gettimeofday(&tv, NULL);
     localtime_r(&tv.tv_sec, &tm);
     uint16_t now = tm.tm_hour * 100 + tm.tm_min;
+    units_lock();
     for (int i = 0; i < unit_count; i++) {
         if (units[i].timer_on && now == units[i].timer_on && !units[i].on) {
             ble_daikin_set_power(units[i].id, true);
@@ -363,4 +379,5 @@ void ble_daikin_timer_check(void)
             units[i].on = false;
         }
     }
+    units_unlock();
 }
