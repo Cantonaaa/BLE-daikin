@@ -20,9 +20,8 @@
 #include "lwip/sockets.h"
 #include "lwip/netdb.h"
 #include "ble_daikin.h"
-#include "daikin_web.h"
 #include "voice_control.h"
-
+#include "daikin_web.h"
 static const char *TAG = "MAIN";
 static int wifi_retry_count = 0;
 #define WIFI_MAX_RETRY 5
