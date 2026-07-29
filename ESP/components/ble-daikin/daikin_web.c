@@ -20,47 +20,95 @@ static const char *WEB_HTML =
     "<style>"
     "*{margin:0;padding:0;box-sizing:border-box;font-family:sans-serif}"
     "body{background:#1a1a2e;color:#eee;padding:20px;max-width:600px;margin:auto}"
-    "h1{color:#e94560;margin-bottom:20px}"
-    ".unit{background:#16213e;border-radius:12px;padding:16px;margin-bottom:12px}"
-    ".unit-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}"
-    ".unit-name{font-size:18px;font-weight:bold;cursor:pointer}"
-    ".unit-name:hover{color:#e94560}"
-    ".unit-status{font-size:13px;color:#aaa;margin-top:2px}"
-    ".timer-row{display:flex;gap:8px;font-size:13px;color:#888;margin-top:6px}"
+    "h1{color:#e94560;margin-bottom:20px;font-size:22px}"
+    ".card{background:#16213e;border-radius:12px;padding:16px;margin-bottom:12px}"
+    ".card-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}"
+    ".name{font-size:18px;font-weight:bold;cursor:pointer}"
+    ".name:hover{color:#e94560}"
+    ".status-text{font-size:13px;color:#aaa;margin-top:2px}"
+    ".timer-row{display:flex;gap:8px;font-size:13px;color:#888;margin-top:6px;flex-wrap:wrap}"
     ".timer-row input{width:52px;background:#0f3460;border:1px solid #2a4a7f;border-radius:4px;color:#eee;padding:3px 6px;font-size:13px}"
-    ".timer-row label{color:#888}"
-    ".btn{padding:8px 20px;border:none;border-radius:8px;font-size:14px;cursor:pointer;color:#fff}"
+    ".timer-row label{color:#888;font-size:13px}"
+    ".btn{padding:8px 20px;border:none;border-radius:8px;font-size:14px;cursor:pointer;color:#fff;display:inline-block}"
+    ".btn-full{width:100%;padding:12px;margin-bottom:12px}"
     ".btn-on{background:#0f3460}"
     ".btn-on.active{background:#e94560}"
     ".btn-on.active:after{content:'OFF'}"
     ".btn-on:after{content:'ON'}"
+    ".btn-primary{background:#2a4a7f}"
+    ".btn-connect{background:#533483;padding:6px 16px;font-size:13px}"
+    ".item{background:#0d1b3e;border-radius:8px;padding:10px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}"
+    ".item-name{font-size:14px}"
+    ".item-rssi{font-size:12px;color:#888}"
     ".header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}"
-    ".status-dot{width:12px;height:12px;border-radius:50%;display:inline-block;margin-right:8px}"
-    ".status-dot.on{background:#00ff88}"
-    ".status-dot.off{background:#ff4444}"
+    ".dot{width:12px;height:12px;border-radius:50%;display:inline-block;margin-right:8px}"
+    ".dot.green{background:#00ff88}"
+    ".dot.red{background:#ff4444}"
+    ".dot.yellow{background:#ffaa00}"
+    ".wifi-note{background:#0f3460;border-radius:8px;padding:12px;margin-bottom:16px;font-size:14px;color:#ccc;text-align:center}"
     "</style></head><body>"
-    "<div class='header'><h1>BLE Daikin</h1><div><span class='status-dot off' id='dot'></span><span id='conn'>Disconnected</span></div></div>"
-    "<div id='units'></div>"
+    "<div class='header'><h1>BLE Daikin</h1><div><span class='dot red' id='dot'></span><span id='conn'>Starting...</span></div></div>"
+    "<div id='main'></div>"
     "<script>"
+    "function qs(k){let u=new URLSearchParams(location.search);let v=u.get(k);return v?v:''}"
     "async function load(){"
-    "let r=await fetch('/api/status');let d=await r.json();"
-    "document.getElementById('conn').textContent=d.connected?'Connected'+(d.ip?' • '+d.ip:''):'Disconnected';"
-    "document.getElementById('dot').className='status-dot '+(d.connected?'on':'off');"
+    "let dot=document.getElementById('dot');"
+    "let conn=document.getElementById('conn');"
+    "let ws=await(await fetch('/api/wifi/status')).json();"
+    "if(!ws.connected){"
+    "dot.className='dot yellow';conn.textContent='WiFi Setup';"
+    "let h='<div class=\"wifi-note\">Connect to your WiFi to enable remote access</div>';"
+    "h+='<button class=\"btn btn-primary btn-full\" onclick=\"wifiScan()\">Scan WiFi</button>';"
+    "h+='<div id=\"wifi-list\"></div>';"
+    "let ssid=qs('ssid');if(ssid){"
+    "h+='<div class=\"card\"><div style=\"margin-bottom:8px\">Connect to <b>'+ssid+'</b></div>';"
+    "h+='<input id=\"wp\" style=\"width:100%;padding:8px;border-radius:6px;border:0;background:#0d1b3e;color:#eee;font-size:14px;margin-bottom:8px\" type=\"password\" placeholder=\"WiFi Password\" onkeydown=\"if(event.key==\\'Enter\\')wifiConnect()\">';"
+    "h+='<button class=\"btn btn-connect\" onclick=\"wifiConnect()\">Connect</button></div>';"
+    "}"
+    "document.getElementById('main').innerHTML=h;"
+    "}else{"
+    "let d=await(await fetch('/api/status')).json();"
+    "dot.className='dot green';conn.textContent='Connected'+(d.ip?' \\u2022 '+d.ip:'');"
     "let h='';"
+    "if(!d.ble_connected){"
+    "h+='<button class=\"btn btn-primary btn-full\" onclick=\"bleScan()\">'+(!d.ble_scanning?'Scan BLE Devices':'Scanning...')+'</button>';"
+    "if(d.devices){"
+    "for(let dv of d.devices){"
+    "h+='<div class=\"item\"><div><div class=\"item-name\">'+dv.name+'</div><div class=\"item-rssi\">'+dv.rssi+' dBm</div></div>';"
+    "h+='<button class=\"btn btn-connect\" onclick=\"bleConnect('+dv.index+')\">Connect</button></div>';"
+    "}"
+    "}}"
+    "if(d.ble_connected&&d.units){"
     "for(let u of d.units){"
-    "h+='<div class=\"unit\"><div class=\"unit-hdr\"><div><div class=\"unit-name\" onclick=\"rename('+u.id+')\">'+u.name+'</div>';"
-    "h+='<div class=\"unit-status\">'+(u.on?'ON':'OFF')+'</div></div>';"
+    "h+='<div class=\"card\"><div class=\"card-hdr\"><div><div class=\"name\" onclick=\"rename('+u.id+')\">'+u.name+'</div>';"
+    "h+='<div class=\"status-text\">'+(u.on?'ON':'OFF')+'</div></div>';"
     "h+='<button class=\"btn '+(u.on?'btn-on active':'btn-on')+'\" onclick=\"toggle('+u.id+')\"></button></div>';"
-    "h+='<div class=\"timer-row\">';"
-    "h+='<label>ON</label><input type=\"time\" id=\"ton'+u.id+'\" value=\"'+u.timer_on+'\" onchange=\"settimer('+u.id+',1,this.value)\">';"
-    "h+='<label>OFF</label><input type=\"time\" id=\"toff'+u.id+'\" value=\"'+u.timer_off+'\" onchange=\"settimer('+u.id+',0,this.value)\">';"
+    "h+='<div class=\"timer-row\"><label>ON</label><input type=\"time\" id=\"ton'+u.id+'\" value=\"'+u.timer_on+'\" onchange=\"setTimer('+u.id+',1,this.value)\">';"
+    "h+='<label>OFF</label><input type=\"time\" id=\"toff'+u.id+'\" value=\"'+u.timer_off+'\" onchange=\"setTimer('+u.id+',0,this.value)\">';"
     "h+='</div></div>';"
+    "}}"
+    "document.getElementById('main').innerHTML=h;"
+    "}}"
+    "async function wifiScan(){document.getElementById('wifi-list').innerHTML='Scanning...';"
+    "let a=await(await fetch('/api/wifi/scan')).json();"
+    "let h='';"
+    "for(let ap of a){"
+    "h+='<div class=\"item\"><div><div class=\"item-name\">'+ap.ssid+'</div><div class=\"item-rssi\">'+ap.rssi+' dBm</div></div>';"
+    "h+='<a class=\"btn btn-connect\" href=\"?ssid='+encodeURIComponent(ap.ssid)+'\">Select</a></div>';"
     "}"
-    "document.getElementById('units').innerHTML=h;"
+    "document.getElementById('wifi-list').innerHTML=h;"
     "}"
+    "async function wifiConnect(){"
+    "let ssid=qs('ssid');"
+    "let pass=document.getElementById('wp').value;"
+    "if(ssid&&pass){document.getElementById('main').innerHTML='<div class=\"wifi-note\">Connecting... ESP32 will restart.</div>';"
+    "await fetch('/api/wifi/connect?ssid='+encodeURIComponent(ssid)+'&pass='+encodeURIComponent(pass));"
+    "}}"
+    "async function bleScan(){await fetch('/api/ble/scan');setTimeout(load,3000);}"
+    "async function bleConnect(i){await fetch('/api/ble/connect?idx='+i);load();}"
     "async function toggle(id){await fetch('/api/toggle?id='+id);load();}"
     "async function rename(id){let n=prompt('Name:');if(n)await fetch('/api/rename?id='+id+'&name='+encodeURIComponent(n));load();}"
-    "async function settimer(id,on,v){let n='timer_'+(on?'on':'off');await fetch('/api/timer?id='+id+'&type='+n+'&val='+v.replace(':',''));load();}"
+    "async function setTimer(id,on,v){let t=v.replace(':','');await fetch('/api/timer?id='+id+'&type='+(on?'timer_on':'timer_off')+'&val='+t);load();}"
     "setInterval(load,5000);load();"
     "</script></body></html>";
 
@@ -137,7 +185,8 @@ static esp_err_t root_handler(httpd_req_t *req)
 static esp_err_t status_handler(httpd_req_t *req)
 {
     cJSON *root = cJSON_CreateObject();
-    cJSON_AddBoolToObject(root, "connected", ble_daikin_is_connected());
+    cJSON_AddBoolToObject(root, "ble_connected", ble_daikin_is_connected());
+    cJSON_AddBoolToObject(root, "ble_scanning", ble_daikin_is_scanning());
 
     esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
     if (netif) {
@@ -149,24 +198,59 @@ static esp_err_t status_handler(httpd_req_t *req)
         }
     }
 
-    cJSON *arr = cJSON_AddArrayToObject(root, "units");
-    for (int i = 0; i < unit_count; i++) {
-        cJSON *u = cJSON_CreateObject();
-        cJSON_AddNumberToObject(u, "id", units[i].id);
-        cJSON_AddBoolToObject(u, "on", units[i].on);
-        cJSON_AddStringToObject(u, "name", units[i].name);
-        char tbuf[8];
-        fmt_time(units[i].timer_on, tbuf, sizeof(tbuf));
-        cJSON_AddStringToObject(u, "timer_on", tbuf);
-        fmt_time(units[i].timer_off, tbuf, sizeof(tbuf));
-        cJSON_AddStringToObject(u, "timer_off", tbuf);
-        cJSON_AddItemToArray(arr, u);
+    if (!ble_daikin_is_connected() && discovered_count > 0) {
+        cJSON *arr = cJSON_AddArrayToObject(root, "devices");
+        for (int i = 0; i < discovered_count; i++) {
+            cJSON *d = cJSON_CreateObject();
+            cJSON_AddNumberToObject(d, "index", i);
+            cJSON_AddStringToObject(d, "name", discovered_devices[i].name);
+            cJSON_AddNumberToObject(d, "rssi", discovered_devices[i].rssi);
+            cJSON_AddItemToArray(arr, d);
+        }
     }
+
+    if (ble_daikin_is_connected()) {
+        cJSON *arr = cJSON_AddArrayToObject(root, "units");
+        for (int i = 0; i < unit_count; i++) {
+            cJSON *u = cJSON_CreateObject();
+            cJSON_AddNumberToObject(u, "id", units[i].id);
+            cJSON_AddBoolToObject(u, "on", units[i].on);
+            cJSON_AddStringToObject(u, "name", units[i].name);
+            char tbuf[8];
+            fmt_time(units[i].timer_on, tbuf, sizeof(tbuf));
+            cJSON_AddStringToObject(u, "timer_on", tbuf);
+            fmt_time(units[i].timer_off, tbuf, sizeof(tbuf));
+            cJSON_AddStringToObject(u, "timer_off", tbuf);
+            cJSON_AddItemToArray(arr, u);
+        }
+    }
+
     char *json = cJSON_PrintUnformatted(root);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, json, strlen(json));
     free(json);
     cJSON_Delete(root);
+    return ESP_OK;
+}
+
+static esp_err_t ble_scan_handler(httpd_req_t *req)
+{
+    ble_daikin_start_scan();
+    httpd_resp_sendstr(req, "{\"ok\":1}");
+    return ESP_OK;
+}
+
+static esp_err_t ble_connect_handler(httpd_req_t *req)
+{
+    char buf[16];
+    if (httpd_req_get_url_query_str(req, buf, sizeof(buf)) == ESP_OK) {
+        char idx_str[4];
+        if (httpd_query_key_value(buf, "idx", idx_str, sizeof(idx_str)) == ESP_OK) {
+            int idx = atoi(idx_str);
+            ble_daikin_connect_to(idx);
+        }
+    }
+    httpd_resp_sendstr(req, "{\"ok\":1}");
     return ESP_OK;
 }
 
@@ -293,26 +377,20 @@ static esp_err_t wifi_status_handler(httpd_req_t *req)
 esp_err_t daikin_web_init(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 8;
+    config.max_uri_handlers = 10;
     config.lru_purge_enable = true;
     if (httpd_start(&server, &config) != ESP_OK) return ESP_FAIL;
 
-        httpd_uri_t r = {.uri = "/", .method = HTTP_GET, .handler = root_handler};
-    httpd_register_uri_handler(server, &r);
-    httpd_uri_t s = {.uri = "/api/status", .method = HTTP_GET, .handler = status_handler};
-    httpd_register_uri_handler(server, &s);
-    httpd_uri_t t = {.uri = "/api/toggle", .method = HTTP_GET, .handler = toggle_handler};
-    httpd_register_uri_handler(server, &t);
-    httpd_uri_t n = {.uri = "/api/rename", .method = HTTP_GET, .handler = rename_handler};
-    httpd_register_uri_handler(server, &n);
-    httpd_uri_t m = {.uri = "/api/timer", .method = HTTP_GET, .handler = timer_handler};
-    httpd_register_uri_handler(server, &m);
-    httpd_uri_t ws = {.uri = "/api/wifi/scan", .method = HTTP_GET, .handler = wifi_scan_handler};
-    httpd_register_uri_handler(server, &ws);
-    httpd_uri_t wc = {.uri = "/api/wifi/connect", .method = HTTP_GET, .handler = wifi_config_handler};
-    httpd_register_uri_handler(server, &wc);
-    httpd_uri_t wst = {.uri = "/api/wifi/status", .method = HTTP_GET, .handler = wifi_status_handler};
-    httpd_register_uri_handler(server, &wst);
+    httpd_register_uri_handler(server, &(httpd_uri_t){.uri = "/", .method = HTTP_GET, .handler = root_handler});
+    httpd_register_uri_handler(server, &(httpd_uri_t){.uri = "/api/status", .method = HTTP_GET, .handler = status_handler});
+    httpd_register_uri_handler(server, &(httpd_uri_t){.uri = "/api/toggle", .method = HTTP_GET, .handler = toggle_handler});
+    httpd_register_uri_handler(server, &(httpd_uri_t){.uri = "/api/rename", .method = HTTP_GET, .handler = rename_handler});
+    httpd_register_uri_handler(server, &(httpd_uri_t){.uri = "/api/timer", .method = HTTP_GET, .handler = timer_handler});
+    httpd_register_uri_handler(server, &(httpd_uri_t){.uri = "/api/ble/scan", .method = HTTP_GET, .handler = ble_scan_handler});
+    httpd_register_uri_handler(server, &(httpd_uri_t){.uri = "/api/ble/connect", .method = HTTP_GET, .handler = ble_connect_handler});
+    httpd_register_uri_handler(server, &(httpd_uri_t){.uri = "/api/wifi/scan", .method = HTTP_GET, .handler = wifi_scan_handler});
+    httpd_register_uri_handler(server, &(httpd_uri_t){.uri = "/api/wifi/connect", .method = HTTP_GET, .handler = wifi_config_handler});
+    httpd_register_uri_handler(server, &(httpd_uri_t){.uri = "/api/wifi/status", .method = HTTP_GET, .handler = wifi_status_handler});
     ESP_LOGI(TAG, "Web started");
     return ESP_OK;
 }
