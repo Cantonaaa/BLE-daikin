@@ -21,6 +21,8 @@
 #include "daikin_web.h"
 
 static const char *TAG = "MAIN";
+static int wifi_retry_count = 0;
+#define WIFI_MAX_RETRY 5
 
 /* 从 NVS 读取 WiFi 凭证（SSID/密码） */
 void load_wifi_creds(char *ssid, char *pass)
@@ -58,10 +60,12 @@ void save_wifi_and_restart(const char *ssid, const char *pass)
 /* 启动 SNTP 时间同步（定时功能需要 NTP 时间） */
 static void start_sntp(void)
 {
+    setenv("TZ", "CST-8", 1);  // 中国时区 UTC+8
+    tzset();
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
     esp_sntp_setservername(0, "pool.ntp.org");
     esp_sntp_init();
-    ESP_LOGI(TAG, "SNTP started");
+    ESP_LOGI(TAG, "SNTP started, timezone: CST-8");
 }
 
 /* WiFi 事件处理 */
@@ -70,10 +74,23 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
     if (id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (id == WIFI_EVENT_STA_DISCONNECTED) {
-        ESP_LOGI(TAG, "WiFi disconnected, retrying...");
-        esp_wifi_connect();
+        wifi_retry_count++;
+        ESP_LOGI(TAG, "WiFi retry %d/%d", wifi_retry_count, WIFI_MAX_RETRY);
+        if (wifi_retry_count >= WIFI_MAX_RETRY) {
+            ESP_LOGW(TAG, "WiFi failed after %d retries, switching to AP mode", WIFI_MAX_RETRY);
+            wifi_retry_count = 0;
+            esp_wifi_stop();
+            esp_wifi_deinit();
+            wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+            esp_wifi_init(&cfg);
+            start_ap();
+            esp_wifi_start();
+        } else {
+            esp_wifi_connect();
+        }
     } else if (id == IP_EVENT_STA_GOT_IP) {
-        // 获取到 IP 后才同步时间（AP 模式下无 SNTP）
+        // 连上 WiFi，重置重试计数
+        wifi_retry_count = 0;
         ESP_LOGI(TAG, "WiFi got IP");
         start_sntp();
     }
