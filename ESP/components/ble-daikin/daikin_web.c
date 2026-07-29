@@ -130,7 +130,11 @@ static const char *WEB_HTML =
     "async function toggle(id){await fetch('/api/toggle?id='+id);load();}"
     "async function rename(id){let n=prompt('名称：');if(n)await fetch('/api/rename?id='+id+'&name='+encodeURIComponent(n));load();}"
     "async function setTimer(id,on,v){let t=v.replace(':','');await fetch('/api/timer?id='+id+'&type='+(on?'timer_on':'timer_off')+'&val='+t);load();}"
-    "setInterval(load,5000);load();"
+    "async function entry(){let ws=await(await fetch('/api/wifi/status')).json();"
+    "if(ws.connected)setInterval(load,5000);"
+    "load();"
+    "}"
+    "entry();"
     "</script></body></html>";
 
 /*
