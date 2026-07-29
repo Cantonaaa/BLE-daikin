@@ -1,3 +1,13 @@
+/*
+ * Web 控制界面
+ * HTTP 服务器提供：
+ * - 配网（WiFi 扫描/连接）
+ * - BLE 设备扫描/连接
+ * - 分机开关控制
+ * - 改名/定时（存 NVS）
+ * - 显示 IP 地址
+ */
+
 #include "daikin_web.h"
 #include "ble_daikin.h"
 #include <string.h>
@@ -13,6 +23,13 @@
 static const char *TAG = "DAIKIN_WEB";
 static httpd_handle_t server = NULL;
 
+/*
+ * Web 页面 HTML（内嵌 CSS + JavaScript）
+ * 页面逻辑：
+ * 1. 未连 WiFi → 显示配网界面（扫描 → 选网络 → 输密码）
+ * 2. 未连 BLE → 显示 BLE 扫描界面
+ * 3. 已连 BLE → 显示分机控制（开关/改名/定时）
+ */
 static const char *WEB_HTML =
     "<!DOCTYPE html><html><head>"
     "<meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -54,12 +71,14 @@ static const char *WEB_HTML =
     "async function load(){"
     "let dot=document.getElementById('dot');"
     "let conn=document.getElementById('conn');"
+    // 第一步：检查 WiFi 状态
     "let ws=await(await fetch('/api/wifi/status')).json();"
     "if(!ws.connected){"
-    "dot.className='dot yellow';conn.textContent='WiFi Setup';"
+    "dot.className='dot.yellow';conn.textContent='WiFi Setup';"
     "let h='<div class=\"wifi-note\">Connect to your WiFi to enable remote access</div>';"
     "h+='<button class=\"btn btn-primary btn-full\" onclick=\"wifiScan()\">Scan WiFi</button>';"
     "h+='<div id=\"wifi-list\"></div>';"
+    // 如果用户从 URL 参数选择了 SSID，显示密码输入框
     "let ssid=qs('ssid');if(ssid){"
     "h+='<div class=\"card\"><div style=\"margin-bottom:8px\">Connect to <b>'+ssid+'</b></div>';"
     "h+='<input id=\"wp\" style=\"width:100%;padding:8px;border-radius:6px;border:0;background:#0d1b3e;color:#eee;font-size:14px;margin-bottom:8px\" type=\"password\" placeholder=\"WiFi Password\" onkeydown=\"if(event.key==\\'Enter\\')wifiConnect()\">';"
@@ -67,8 +86,9 @@ static const char *WEB_HTML =
     "}"
     "document.getElementById('main').innerHTML=h;"
     "}else{"
+    // 第二步：WiFi 已连，检查 BLE 状态
     "let d=await(await fetch('/api/status')).json();"
-    "dot.className='dot green';conn.textContent='Connected'+(d.ip?' \\u2022 '+d.ip:'');"
+    "dot.className='dot.green';conn.textContent='Connected'+(d.ip?' \\u2022 '+d.ip:'');"
     "let h='';"
     "if(!d.ble_connected){"
     "h+='<button class=\"btn btn-primary btn-full\" onclick=\"bleScan()\">'+(!d.ble_scanning?'Scan BLE Devices':'Scanning...')+'</button>';"
@@ -78,6 +98,7 @@ static const char *WEB_HTML =
     "h+='<button class=\"btn btn-connect\" onclick=\"bleConnect('+dv.index+')\">Connect</button></div>';"
     "}"
     "}}"
+    // 第三步：BLE 已连，显示分机控制
     "if(d.ble_connected&&d.units){"
     "for(let u of d.units){"
     "h+='<div class=\"card\"><div class=\"card-hdr\"><div><div class=\"name\" onclick=\"rename('+u.id+')\">'+u.name+'</div>';"
@@ -112,6 +133,10 @@ static const char *WEB_HTML =
     "setInterval(load,5000);load();"
     "</script></body></html>";
 
+/*
+ * NVS 存储：定时设置
+ * key 格式: ton_82 / toff_82（82=分机 ID）
+ */
 static void save_timer_nvs(int idx)
 {
     nvs_handle_t nvs;
@@ -139,6 +164,7 @@ static void load_timers_nvs(void)
     nvs_close(nvs);
 }
 
+/* NVS 存储：分机名称 */
 static void save_name_nvs(int idx)
 {
     nvs_handle_t nvs;
@@ -163,18 +189,21 @@ static void load_names_nvs(void)
     nvs_close(nvs);
 }
 
+/* 启动时调用：从 NVS 恢复定时和分机名称 */
 void daikin_web_load_nvs(void)
 {
     load_timers_nvs();
     load_names_nvs();
 }
 
+/* HHMM 格式 → 字符串 "HH:MM" */
 static void fmt_time(uint16_t t, char *buf, size_t len)
 {
     if (!t) { buf[0] = 0; return; }
     snprintf(buf, len, "%02d:%02d", t / 100, t % 100);
 }
 
+/* 路由：GET / → 返回 Web 页面 */
 static esp_err_t root_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html");
@@ -182,12 +211,22 @@ static esp_err_t root_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/*
+ * 路由：GET /api/status → JSON
+ * {
+ *   ble_connected, ble_scanning,
+ *   ip (WiFi IP),
+ *   devices[] (BLE 扫描到的设备，未连接时),
+ *   units[] (分机列表，已连接时)
+ * }
+ */
 static esp_err_t status_handler(httpd_req_t *req)
 {
     cJSON *root = cJSON_CreateObject();
     cJSON_AddBoolToObject(root, "ble_connected", ble_daikin_is_connected());
     cJSON_AddBoolToObject(root, "ble_scanning", ble_daikin_is_scanning());
 
+    // 读取 WiFi STA 模式的 IP 地址
     esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
     if (netif) {
         esp_netif_ip_info_t ip;
@@ -198,6 +237,7 @@ static esp_err_t status_handler(httpd_req_t *req)
         }
     }
 
+    // 未连接 BLE 时，返回扫描到的设备列表
     if (!ble_daikin_is_connected() && discovered_count > 0) {
         cJSON *arr = cJSON_AddArrayToObject(root, "devices");
         for (int i = 0; i < discovered_count; i++) {
@@ -209,6 +249,7 @@ static esp_err_t status_handler(httpd_req_t *req)
         }
     }
 
+    // 已连接 BLE 时，返回分机列表
     if (ble_daikin_is_connected()) {
         cJSON *arr = cJSON_AddArrayToObject(root, "units");
         for (int i = 0; i < unit_count; i++) {
@@ -233,6 +274,7 @@ static esp_err_t status_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* 路由：GET /api/ble/scan → 触发 BLE 扫描 */
 static esp_err_t ble_scan_handler(httpd_req_t *req)
 {
     ble_daikin_start_scan();
@@ -240,6 +282,7 @@ static esp_err_t ble_scan_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* 路由：GET /api/ble/connect?idx=X → 连接扫描到的第 X 个设备 */
 static esp_err_t ble_connect_handler(httpd_req_t *req)
 {
     char buf[16];
@@ -254,6 +297,7 @@ static esp_err_t ble_connect_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* 路由：GET /api/toggle?id=X → 切换分机 X 的开关状态 */
 static esp_err_t toggle_handler(httpd_req_t *req)
 {
     char buf[16];
@@ -274,6 +318,7 @@ static esp_err_t toggle_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* 路由：GET /api/rename?id=X&name=新名称 → 改名 */
 static esp_err_t rename_handler(httpd_req_t *req)
 {
     char buf[128];
@@ -295,6 +340,10 @@ static esp_err_t rename_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/*
+ * 路由：GET /api/timer?id=X&type=timer_on&val=HHMM
+ *       或 type=timer_off → 设置定时（存 NVS）
+ */
 static esp_err_t timer_handler(httpd_req_t *req)
 {
     char buf[64];
@@ -319,6 +368,7 @@ static esp_err_t timer_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* 路由：GET /api/wifi/scan → 扫描 WiFi 热点 */
 static esp_err_t wifi_scan_handler(httpd_req_t *req)
 {
     uint16_t count = 20;
@@ -342,6 +392,10 @@ static esp_err_t wifi_scan_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/*
+ * 路由：GET /api/wifi/connect?ssid=xxx&pass=xxx
+ * 保存 WiFi 凭证到 NVS 并重启
+ */
 static esp_err_t wifi_config_handler(httpd_req_t *req)
 {
     char buf[128];
@@ -356,6 +410,7 @@ static esp_err_t wifi_config_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* 路由：GET /api/wifi/status → { connected, ssid, rssi } */
 static esp_err_t wifi_status_handler(httpd_req_t *req)
 {
     wifi_ap_record_t ap;
@@ -374,6 +429,7 @@ static esp_err_t wifi_status_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* 注册所有 HTTP 路由并启动 Web 服务器 */
 esp_err_t daikin_web_init(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
@@ -381,16 +437,22 @@ esp_err_t daikin_web_init(void)
     config.lru_purge_enable = true;
     if (httpd_start(&server, &config) != ESP_OK) return ESP_FAIL;
 
+    /* 页面 */
     httpd_register_uri_handler(server, &(httpd_uri_t){.uri = "/", .method = HTTP_GET, .handler = root_handler});
+    /* 状态查询 */
     httpd_register_uri_handler(server, &(httpd_uri_t){.uri = "/api/status", .method = HTTP_GET, .handler = status_handler});
+    /* 分机控制 */
     httpd_register_uri_handler(server, &(httpd_uri_t){.uri = "/api/toggle", .method = HTTP_GET, .handler = toggle_handler});
     httpd_register_uri_handler(server, &(httpd_uri_t){.uri = "/api/rename", .method = HTTP_GET, .handler = rename_handler});
     httpd_register_uri_handler(server, &(httpd_uri_t){.uri = "/api/timer", .method = HTTP_GET, .handler = timer_handler});
+    /* BLE 操作 */
     httpd_register_uri_handler(server, &(httpd_uri_t){.uri = "/api/ble/scan", .method = HTTP_GET, .handler = ble_scan_handler});
     httpd_register_uri_handler(server, &(httpd_uri_t){.uri = "/api/ble/connect", .method = HTTP_GET, .handler = ble_connect_handler});
+    /* WiFi 配网 */
     httpd_register_uri_handler(server, &(httpd_uri_t){.uri = "/api/wifi/scan", .method = HTTP_GET, .handler = wifi_scan_handler});
     httpd_register_uri_handler(server, &(httpd_uri_t){.uri = "/api/wifi/connect", .method = HTTP_GET, .handler = wifi_config_handler});
     httpd_register_uri_handler(server, &(httpd_uri_t){.uri = "/api/wifi/status", .method = HTTP_GET, .handler = wifi_status_handler});
-    ESP_LOGI(TAG, "Web started");
+
+    ESP_LOGI(TAG, "Web started on port 80");
     return ESP_OK;
 }
