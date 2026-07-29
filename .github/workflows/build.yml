@@ -20,21 +20,20 @@ jobs:
           cd ESP
           idf.py build
 
-      - name: Install esptool
-        shell: bash
-        run: pip install esptool
-
-      - name: Merge
-        shell: bash
-        run: |
-          cd ESP/build
-          esptool.py --chip esp32s3 merge_bin --output BLE-Daikin-N16R8.bin \
-            0x0 bootloader/bootloader.bin \
-            0x8000 partition_table/partition-table.bin \
-            0x10000 BLE-Daikin.bin
-
-      - name: Upload
+      - name: Upload bootloader
         uses: actions/upload-artifact@v4
         with:
-          name: BLE-Daikin-N16R8
-          path: ESP/build/BLE-Daikin-N16R8.bin
+          name: bootloader
+          path: ESP/build/bootloader/bootloader.bin
+
+      - name: Upload partition table
+        uses: actions/upload-artifact@v4
+        with:
+          name: partition-table
+          path: ESP/build/partition_table/partition-table.bin
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: BLE-Daikin
+          path: ESP/build/BLE-Daikin.bin
