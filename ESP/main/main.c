@@ -8,6 +8,7 @@
 #include "esp_netif.h"
 #include "esp_event.h"
 #include "esp_sntp.h"
+#include "esp_system.h"
 #include "ble_daikin.h"
 #include "daikin_web.h"
 
