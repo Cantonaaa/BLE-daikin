@@ -185,9 +185,14 @@ esp_err_t voice_control_init(void)
         return ESP_FAIL;
     }
 
-    afe_handle = &esp_afe_sr_1mic();
-    afe_config_t afe_config = AFE_CONFIG_DEFAULT();
-    afe_data = afe_handle->create(&afe_config);
+    afe_config_t *afe_config = afe_config_init("M", models, AFE_TYPE_SR, AFE_MODE_LOW_COST);
+    if (!afe_config) {
+        ESP_LOGE(TAG, "AFE config init failed");
+        return ESP_FAIL;
+    }
+    afe_handle = esp_afe_handle_from_config(afe_config);
+    afe_data = afe_handle->create_from_config(afe_config);
+    afe_config_free(afe_config);
     if (!afe_data) {
         ESP_LOGE(TAG, "AFE create failed");
         return ESP_FAIL;

@@ -245,6 +245,11 @@ static void timer_task(void *arg)
     while (1) { ble_daikin_timer_check(); vTaskDelay(pdMS_TO_TICKS(30000)); }
 }
 
+static void voice_power_cb(uint8_t unit_id, bool on)
+{
+    ble_daikin_set_power(unit_id, on);
+}
+
 static int voice_units_getter(uint8_t *ids, char names[][32], int max)
 {
     units_lock();
@@ -266,7 +271,7 @@ void app_main(void)
     ble_daikin_init();
     daikin_web_init();
     daikin_web_load_nvs();
-    voice_control_register_power_cb(ble_daikin_set_power);
+    voice_control_register_power_cb(voice_power_cb);
     voice_control_register_units_cb(voice_units_getter);
     daikin_on_rename = voice_control_notify_rename;
     voice_control_init();
