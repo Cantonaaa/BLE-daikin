@@ -112,7 +112,9 @@ void wifi_init(void)
 static void ble_task(void *arg)
 {
     while (1) {
-        if (!ble_daikin_is_connected()) ble_daikin_connect();
+        if (!ble_daikin_is_connected() && !ble_daikin_is_scanning()) {
+            ble_daikin_start_scan();
+        }
         vTaskDelay(pdMS_TO_TICKS(30000));
     }
 }
@@ -128,6 +130,7 @@ void app_main(void)
     wifi_init();
     ble_daikin_init();
     daikin_web_init();
+    daikin_web_load_nvs();
 
     xTaskCreatePinnedToCore(ble_task, "ble", 4096, NULL, 5, NULL, 1);
     xTaskCreatePinnedToCore(timer_task, "tmr", 3072, NULL, 3, NULL, 0);
