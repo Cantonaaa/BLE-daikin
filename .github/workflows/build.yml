@@ -14,14 +14,18 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build
+        shell: bash
         run: |
+          . /opt/esp/idf/export.sh
           cd ESP
           idf.py build
 
       - name: Install esptool
+        shell: bash
         run: pip install esptool
 
       - name: Merge
+        shell: bash
         run: |
           cd ESP/build
           esptool.py --chip esp32s3 merge_bin --output BLE-Daikin-N16R8.bin \
