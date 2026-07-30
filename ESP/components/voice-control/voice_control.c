@@ -240,7 +240,11 @@ esp_err_t voice_control_init(void)
     // ==== 1. I2S 初始化 ====
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
     chan_cfg.auto_clear = true;
-    ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, NULL, &i2s_rx_handle));
+    esp_err_t ret = i2s_new_channel(&chan_cfg, NULL, &i2s_rx_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "I2S new channel failed, voice disabled");
+        return ESP_FAIL;
+    }
 
     i2s_std_config_t std_cfg = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(SAMPLE_RATE),
@@ -256,8 +260,18 @@ esp_err_t voice_control_init(void)
             },
         },
     };
-    ESP_ERROR_CHECK(i2s_channel_init_std_mode(i2s_rx_handle, &std_cfg));
-    ESP_ERROR_CHECK(i2s_channel_enable(i2s_rx_handle));
+    ret = i2s_channel_init_std_mode(i2s_rx_handle, &std_cfg);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "I2S init std mode failed, voice disabled");
+        i2s_del_channel(i2s_rx_handle);
+        return ESP_FAIL;
+    }
+    ret = i2s_channel_enable(i2s_rx_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "I2S enable failed, voice disabled");
+        i2s_del_channel(i2s_rx_handle);
+        return ESP_FAIL;
+    }
     ESP_LOGI(TAG, "I2S initialized (BCLK=GPIO%d, WS=GPIO%d, DIN=GPIO%d)",
              I2S_BCLK_GPIO, I2S_WS_GPIO, I2S_DIN_GPIO);
 
