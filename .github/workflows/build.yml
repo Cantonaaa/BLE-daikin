@@ -1,0 +1,39 @@
+name: Build BLE-Daikin N16R8
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: espressif/idf:v5.4
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        shell: bash
+        run: |
+          . /opt/esp/idf/export.sh
+          cd ESP
+          idf.py build
+
+      - name: Upload bootloader
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootloader
+          path: ESP/build/bootloader/bootloader.bin
+
+      - name: Upload partition table
+        uses: actions/upload-artifact@v4
+        with:
+          name: partition-table
+          path: ESP/build/partition_table/partition-table.bin
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: BLE-Daikin
+          path: ESP/build/BLE-Daikin.bin

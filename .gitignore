@@ -1,0 +1,13 @@
+build/
+*.bin
+*~
+.vscode/
+__pycache__/
+*.pyc
+sdkconfig
+sdkconfig.old
+managed_components/
+reference/
+firmware/
+*.tar.gz
+dependencies.lock
