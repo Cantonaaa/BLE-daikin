@@ -49,8 +49,8 @@
 
 | 版本 | 适用硬件 | Release |
 |---|---|---|
-| **核心版** | 任何 ESP32-S3 N16R8 | `v1.1.2` → `BLE-Daikin-N16R8-all.bin` |
-| **语音版** | 需外接 INMP441 I2S 麦克风 | `v1.1.2vc` → `BLE-Daikin-VoiceControl-all.bin` |
+| **核心版** | 任何 ESP32-S3 N16R8 | `v1.2.0` → `BLE-Daikin-N16R8-all.bin` |
+| **语音版** | 需外接 INMP441 I2S 麦克风 | `v1.2.1` → `BLE-Daikin-VoiceControl-all.bin` |
 
 语音版在核心版基础上增加了离线语音识别模块。不接麦克风时功能与核心版完全一致。
 
@@ -332,11 +332,26 @@ BLE-Daikin/
 
 ---
 
+## 版本号规则
+
+格式：`v<main>.<feature>.<patch>`
+
+| 例 | 说明 |
+|----|------|
+| v1.2.0 | main 基础版（末位为 0） |
+| v1.2.1 | 基于 v1.2.0 的语音版 |
+| v1.2.2 | 语音模块单独更新 |
+| v1.3.0 | main 更新 |
+
+- 前两位：对应所用 `main` 版本号
+- 末位为 0：`main` 分支固件
+- 末位非 0：`voice-control` 分支固件，该位递增表示语音模块单独变更
+
 ## Release 版本说明
 
 | 版本 | 分支 | 说明 |
 |---|---|---|
-| **v1.1.2** | `main` | 核心版，可直接烧录 |
-| **v1.1.2vc** | `voice-control` | 语音版，需 INMP441 麦克风 |
+| **v1.2.0** | `main` | 核心版 |
+| **v1.2.1** | `voice-control` | 语音版，需 INMP441 麦克风 |
 
 完整 Release 列表见 https://github.com/Cantonaaa/BLE-daikin/releases
