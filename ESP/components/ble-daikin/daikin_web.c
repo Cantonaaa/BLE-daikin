@@ -123,9 +123,19 @@ static const char *WEB_HTML =
     "async function wifiConnect(){"
     "let ssid=qs('ssid');"
     "let pass=document.getElementById('wp').value;"
-    "if(ssid&&pass){document.getElementById('main').innerHTML='<div class=\"wifi-note\">连接中... ESP32 即将重启。</div>';"
-    "await fetch('/api/wifi/connect?ssid='+encodeURIComponent(ssid)+'&pass='+encodeURIComponent(pass));"
-    "}}"
+    "if(!ssid||!pass)return;"
+    "document.getElementById('main').innerHTML='<div class=\"wifi-note\">正在连接，请稍候...</div>';"
+    "try{"
+    "let r=await(await fetch('/api/wifi/connect?ssid='+encodeURIComponent(ssid)+'&pass='+encodeURIComponent(pass))).json();"
+    "if(r.ok){"
+    "document.getElementById('main').innerHTML='<div class=\"wifi-note\">连接成功！设备即将重启。</div>';"
+    "}else{"
+    "document.getElementById('main').innerHTML='<div class=\"wifi-note\" style=\"color:#ff4444\">连接失败，请检查密码后重试</div>';"
+    "setTimeout(load,3000);"
+    "}"
+    "}catch(e){"
+    "document.getElementById('main').innerHTML='<div class=\"wifi-note\">连接成功！设备即将重启。</div>';"
+    "}"
     "async function bleScan(){await fetch('/api/ble/scan');setTimeout(load,3000);}"
     "async function bleConnect(i){await fetch('/api/ble/connect?idx='+i);load();}"
     "async function toggle(id){await fetch('/api/toggle?id='+id);load();}"
@@ -412,7 +422,7 @@ static esp_err_t wifi_scan_handler(httpd_req_t *req)
 
 /*
  * 路由：GET /api/wifi/connect?ssid=xxx&pass=xxx
- * 保存 WiFi 凭证到 NVS 并重启
+ * 先尝试连接 WiFi，成功后保存凭据并重启
  */
 static esp_err_t wifi_config_handler(httpd_req_t *req)
 {
@@ -421,10 +431,23 @@ static esp_err_t wifi_config_handler(httpd_req_t *req)
         char ssid[64], pass[64];
         if (httpd_query_key_value(buf, "ssid", ssid, sizeof(ssid)) == ESP_OK &&
             httpd_query_key_value(buf, "pass", pass, sizeof(pass)) == ESP_OK) {
-            save_wifi_and_restart(ssid, pass);
+            wifi_config_t sta = {0};
+            strncpy((char*)sta.sta.ssid, ssid, sizeof(sta.sta.ssid) - 1);
+            strncpy((char*)sta.sta.password, pass, sizeof(sta.sta.password) - 1);
+            esp_wifi_set_config(WIFI_IF_STA, &sta);
+            esp_wifi_disconnect();
+            if (wait_for_wifi_result(30000)) {
+                save_wifi_creds(ssid, pass);
+                httpd_resp_sendstr(req, "{\"ok\":1}");
+                vTaskDelay(pdMS_TO_TICKS(100));
+                esp_restart();
+            } else {
+                httpd_resp_sendstr(req, "{\"ok\":0}");
+                return ESP_OK;
+            }
         }
     }
-    httpd_resp_sendstr(req, "{\"ok\":1}");
+    httpd_resp_sendstr(req, "{\"ok\":0}");
     return ESP_OK;
 }
 
