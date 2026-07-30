@@ -9,6 +9,7 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/event_groups.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "nvs.h"
@@ -25,6 +26,11 @@
 static const char *TAG = "MAIN";
 static int wifi_retry_count = 0;
 #define WIFI_MAX_RETRY 5
+
+static EventGroupHandle_t wifi_event_group = NULL;
+static bool wifi_config_mode = false;
+#define WIFI_CONNECTED_BIT BIT0
+#define WIFI_FAIL_BIT      BIT1
 
 /* 从 NVS 读取 WiFi 凭证（SSID/密码） */
 void load_wifi_creds(char *ssid, char *pass)
@@ -152,7 +158,11 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
     } else if (id == WIFI_EVENT_STA_DISCONNECTED) {
         wifi_retry_count++;
         ESP_LOGI(TAG, "WiFi retry %d/%d", wifi_retry_count, WIFI_MAX_RETRY);
-        if (wifi_retry_count >= WIFI_MAX_RETRY) {
+        if (wifi_config_mode && wifi_retry_count >= WIFI_MAX_RETRY) {
+            if (wifi_event_group)
+                xEventGroupSetBits(wifi_event_group, WIFI_FAIL_BIT);
+            wifi_retry_count = 0;
+        } else if (wifi_retry_count >= WIFI_MAX_RETRY) {
             ESP_LOGW(TAG, "WiFi failed after %d retries, switching to AP mode", WIFI_MAX_RETRY);
             wifi_retry_count = 0;
             esp_wifi_stop();
@@ -167,8 +177,24 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
     } else if (id == IP_EVENT_STA_GOT_IP) {
         wifi_retry_count = 0;
         ESP_LOGI(TAG, "WiFi got IP");
+        if (wifi_config_mode && wifi_event_group)
+            xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
         start_sntp();
     }
+}
+
+bool wait_for_wifi_result(uint32_t timeout_ms)
+{
+    if (!wifi_event_group)
+        wifi_event_group = xEventGroupCreate();
+    wifi_config_mode = true;
+    wifi_retry_count = 0;
+    esp_wifi_connect();
+    EventBits_t bits = xEventGroupWaitBits(wifi_event_group,
+        WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
+        pdTRUE, pdFALSE, pdMS_TO_TICKS(timeout_ms));
+    wifi_config_mode = false;
+    return (bits & WIFI_CONNECTED_BIT) != 0;
 }
 
 /* 开启 AP 热点 + DNS 劫持（无 WiFi 配置时自动启动） */
