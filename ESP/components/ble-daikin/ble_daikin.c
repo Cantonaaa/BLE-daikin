@@ -40,6 +40,7 @@ static bool connected = false;
 static bool scanning = false;
 static uint16_t conn_handle = 0;
 static uint16_t handle_cmd = 0;  // 动态发现的开关指令特征值 handle
+static uint32_t reconnect_backoff_ms = 1000;  // 断线重连退避初始值
 
 /* NimBLE 主循环任务：初始化 BLE 协议栈后持续运行 */
 static void nimble_host_task(void *arg)
@@ -217,11 +218,12 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg)
             }
         }
         break;
-    // 连接成功：保存地址、发起 GATT 服务发现
+    // 连接成功：保存地址、重置退避、发起 GATT 服务发现
     case BLE_GAP_EVENT_CONNECT:
         if (event->connect.status == 0) {
             conn_handle = event->connect.conn_handle;
             scanning = false;
+            reconnect_backoff_ms = 1000;
             // 获取并保存对方 BLE 地址（用于断线后自动重连）
             struct ble_gap_conn_desc conn_desc;
             if (ble_gap_conn_find(event->connect.conn_handle, &conn_desc) == 0) {
@@ -263,7 +265,8 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_DISCONNECT:
         connected = false;
         handle_cmd = 0;
-        ESP_LOGI(TAG, "Disconnected");
+        reconnect_backoff_ms = (reconnect_backoff_ms < 300000) ? reconnect_backoff_ms * 2 : 300000;
+        ESP_LOGI(TAG, "Disconnected, backoff=%lums", reconnect_backoff_ms);
         break;
     default:
         break;
@@ -348,7 +351,7 @@ esp_err_t ble_daikin_set_power(uint8_t unit_id, bool on)
     uint8_t cmd[24] = {
         0x00,0x1d,0x00,on?0x4f:0x4e, 0x00,0x45,0x15,0x21,
         0x12,0x1f,0x1c, on?0x82:0x84, on?0x21:0x22, 0x00,0x00,
-        0x67,0x00,0x00, 0x36,0x00,0x08, 0x00,0x03,unit_id, 0x00
+        0x67,0x00,0x00, 0x36,0x00,0x08, 0x00,0x03,unit_id
     };
     uint8_t ck = 0;
     for (int i = 2; i < 23; i++) ck += cmd[i];
@@ -358,6 +361,16 @@ esp_err_t ble_daikin_set_power(uint8_t unit_id, bool on)
     ESP_LOGI(TAG, "Power %s unit 0x%02x via 0x%04x (rc=%d)",
              on?"ON":"OFF", unit_id, handle_cmd, rc);
     return (rc == 0) ? ESP_OK : ESP_FAIL;
+}
+
+void ble_daikin_reset_backoff(void)
+{
+    reconnect_backoff_ms = 1000;
+}
+
+uint32_t ble_daikin_get_backoff_ms(void)
+{
+    return reconnect_backoff_ms;
 }
 
 /* 定时检查：每到整分就对比 timer_on/timer_off 并执行开关 */

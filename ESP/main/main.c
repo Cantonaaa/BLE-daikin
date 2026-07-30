@@ -231,9 +231,12 @@ static void ble_task(void *arg)
 {
     while (1) {
         if (!ble_daikin_is_connected() && !ble_daikin_is_scanning()) {
+            uint32_t backoff = ble_daikin_get_backoff_ms();
+            vTaskDelay(pdMS_TO_TICKS(backoff));
             ble_daikin_start_scan();
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(30000));
         }
-        vTaskDelay(pdMS_TO_TICKS(30000));
     }
 }
 

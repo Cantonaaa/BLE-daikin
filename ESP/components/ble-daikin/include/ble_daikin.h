@@ -35,3 +35,5 @@ bool ble_daikin_is_connected(void);
 bool ble_daikin_is_scanning(void);
 esp_err_t ble_daikin_set_power(uint8_t unit_id, bool on);
 void ble_daikin_timer_check(void);
+void ble_daikin_reset_backoff(void);
+uint32_t ble_daikin_get_backoff_ms(void);

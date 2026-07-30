@@ -310,6 +310,7 @@ static esp_err_t toggle_handler(httpd_req_t *req)
         char id_str[4];
         if (httpd_query_key_value(buf, "id", id_str, sizeof(id_str)) == ESP_OK) {
             int id = atoi(id_str);
+            units_lock();
             for (int i = 0; i < unit_count; i++) {
                 if (units[i].id == id) {
                     units[i].on = !units[i].on;
@@ -317,6 +318,7 @@ static esp_err_t toggle_handler(httpd_req_t *req)
                     break;
                 }
             }
+            units_unlock();
         }
     }
     httpd_resp_sendstr(req, "{\"ok\":1}");
@@ -332,13 +334,19 @@ static esp_err_t rename_handler(httpd_req_t *req)
         if (httpd_query_key_value(buf, "id", id_str, sizeof(id_str)) == ESP_OK &&
             httpd_query_key_value(buf, "name", name, sizeof(name)) == ESP_OK) {
             int id = atoi(id_str);
+            int found = -1;
+            units_lock();
             for (int i = 0; i < unit_count; i++) {
                 if (units[i].id == id) {
                     strncpy(units[i].name, name, sizeof(units[i].name) - 1);
-                    save_name_nvs(i);
-                    if (daikin_on_rename) daikin_on_rename();
+                    found = i;
                     break;
                 }
+            }
+            units_unlock();
+            if (found >= 0) {
+                save_name_nvs(found);
+                if (daikin_on_rename) daikin_on_rename();
             }
         }
     }
@@ -360,14 +368,18 @@ static esp_err_t timer_handler(httpd_req_t *req)
             httpd_query_key_value(buf, "val", val_str, sizeof(val_str)) == ESP_OK) {
             int id = atoi(id_str);
             uint16_t t = atoi(val_str);
+            int found = -1;
+            units_lock();
             for (int i = 0; i < unit_count; i++) {
                 if (units[i].id == id) {
                     if (strcmp(type, "timer_on") == 0) units[i].timer_on = t;
                     if (strcmp(type, "timer_off") == 0) units[i].timer_off = t;
-                    save_timer_nvs(i);
+                    found = i;
                     break;
                 }
             }
+            units_unlock();
+            if (found >= 0) save_timer_nvs(found);
         }
     }
     httpd_resp_sendstr(req, "{\"ok\":1}");
