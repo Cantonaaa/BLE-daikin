@@ -8,7 +8,7 @@
 #include "pinyin.h"
 #include <string.h>
 
-/* 生成的拼音表（见 pinyin_table.inc） */
+/* 生成的拼音表（纯数据，见 pinyin_table.inc） */
 #include "pinyin_table.inc"
 
 /* 二分查找：codepoint -> 拼音，找不到返回 NULL */

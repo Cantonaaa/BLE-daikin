@@ -1,5 +1,15 @@
 #pragma once
 #include <stddef.h>
+#include <stdint.h>
+
+/* 拼音表条目类型（pinyin_table.inc 使用） */
+typedef struct {
+    uint32_t codepoint;   /* Unicode 码点 (UTF-8 解码后的值) */
+    const char *pinyin;   /* 带声调的拼音 */
+} pinyin_entry_t;
+
+extern const pinyin_entry_t pinyin_table[];
+extern const unsigned int pinyin_table_size;
 
 /*
  * 将 UTF-8 名称转换为拼音 key（带声调，空格分隔）

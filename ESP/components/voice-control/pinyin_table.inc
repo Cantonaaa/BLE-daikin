@@ -1,22 +1,9 @@
 /*
  * 自动生成的汉字->拼音表 (GB2312 一级字库, 带声调)
  * 由 tools/gen_pinyin.py 生成, 请勿手动编辑
+ * 该文件为纯数据文件, 由 pinyin.c 通过 #include 包含。
  */
-#ifndef PINYIN_TABLE_H
-#define PINYIN_TABLE_H
-
-#include <stdint.h>
-
-typedef struct {
-    uint32_t codepoint;   /* Unicode 码点 (UTF-8 解码后的值) */
-    const char *pinyin;   /* 带声调的拼音 */
-} pinyin_entry_t;
-
-extern const pinyin_entry_t pinyin_table[];
-extern const unsigned int pinyin_table_size;
-
-#endif
-
+const pinyin_entry_t pinyin_table[] = {
     { 0x4E00, "yī" },
     { 0x4E01, "dīng" },
     { 0x4E03, "qī" },
