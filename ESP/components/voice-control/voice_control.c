@@ -11,7 +11,9 @@
  */
 
 #include "voice_control.h"
+#include "pinyin.h"
 #include <stdio.h>
+#include <string.h>
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
@@ -27,6 +29,21 @@
 #include "model_path.h"
 
 static const char *TAG = "VOICE_CTRL";
+
+/* 分机分组：按拼音 key 归组，同音/同字分机一组，一条指令控制整组 */
+#define MAX_NAME_GROUPS VOICE_MAX_UNITS
+typedef struct {
+    char pkey[64];            /* 拼音 key（用于归组判断） */
+    char name[32];            /* 显示名（取组内第一个分机名，用于口述命令） */
+    uint8_t ids[VOICE_MAX_UNITS];  /* 组内分机 ID 列表 */
+    int count;
+} name_group_t;
+static name_group_t name_groups[MAX_NAME_GROUPS];
+static int name_group_count = 0;
+
+/* 组命令 ID 段：0x2000+idx 开组，0x3000+idx 关组 */
+#define GROUP_ON_BASE  0x2000
+#define GROUP_OFF_BASE 0x3000
 
 /* I2S 麦克风引脚配置（INMP441） */
 #define I2S_BCLK_GPIO 6
@@ -57,6 +74,8 @@ void voice_control_register_units_cb(voice_get_units_fn cb) { get_units_cb = cb;
  *   0xFFFE = 全部关机
  *   0x00~0xFF = 单台开机（低字节为分机 ID）
  *   0x100~0x1FF = 单台关机（低字节为分机 ID）
+ *   0x2000~0x2FFF = 按名称分组开机（组内全部）
+ *   0x3000~0x3FFF = 按名称分组关机（组内全部）
  */
 static void voice_command_callback(int command_id)
 {
@@ -82,6 +101,21 @@ static void voice_command_callback(int command_id)
         ESP_LOGI(TAG, "ALL UNITS OFF");
         return;
     }
+    // 按名称分组开关（同音/同字分机一起控制）
+    if (command_id >= GROUP_ON_BASE && command_id < GROUP_ON_BASE + name_group_count) {
+        int g = command_id - GROUP_ON_BASE;
+        for (int k = 0; k < name_groups[g].count; k++)
+            if (power_cb) power_cb(name_groups[g].ids[k], true);
+        ESP_LOGI(TAG, "GROUP ON '%s' (%d units)", name_groups[g].name, name_groups[g].count);
+        return;
+    }
+    if (command_id >= GROUP_OFF_BASE && command_id < GROUP_OFF_BASE + name_group_count) {
+        int g = command_id - GROUP_OFF_BASE;
+        for (int k = 0; k < name_groups[g].count; k++)
+            if (power_cb) power_cb(name_groups[g].ids[k], false);
+        ESP_LOGI(TAG, "GROUP OFF '%s' (%d units)", name_groups[g].name, name_groups[g].count);
+        return;
+    }
     // 单台开关（command_id < 256 表示开，>= 256 表示关）
     bool on = (command_id < 256);
     uint8_t unit_id = on ? (uint8_t)command_id : (uint8_t)(command_id & 0xFF);
@@ -94,8 +128,8 @@ static void voice_command_callback(int command_id)
  * 每次分机改名后调用，重新生成语音命令注册表：
  *   - "打开空调" → 0xFFFF（全部开）
  *   - "关闭空调" → 0xFFFE（全部关）
- *   - "打开[分机名]" → 分机 ID（开）
- *   - "关掉[分机名]" → 分机 ID | 0x100（关）
+ *   - "打开[分机名]" → 组命令（按拼音 key 归组，同音/同字分机一起控制）
+ *   - "关掉[分机名]" → 组命令
  */
 void voice_control_sync_commands(void)
 {
@@ -111,21 +145,47 @@ void voice_control_sync_commands(void)
     esp_mn_commands_add(0xFFFF, "打开空调");
     esp_mn_commands_add(0xFFFE, "关闭空调");
 
-    // 为每个分机注册"打开[名称]"和"关掉[名称]"命令
+    // 按拼音 key 归组
+    name_group_count = 0;
+    memset(name_groups, 0, sizeof(name_groups));
     for (int i = 0; i < cnt; i++) {
         if (names[i][0] == 0) continue;  // 跳过未命名的分机
+
+        char pkey[64];
+        pinyin_of_name(names[i], pkey, sizeof(pkey));
+
+        // 在已有组中查找拼音相同的组
+        int g = -1;
+        for (int j = 0; j < name_group_count; j++) {
+            if (strcmp(name_groups[j].pkey, pkey) == 0) { g = j; break; }
+        }
+        // 没有则新建组
+        if (g < 0) {
+            if (name_group_count >= MAX_NAME_GROUPS) continue;
+            g = name_group_count++;
+            strncpy(name_groups[g].pkey, pkey, sizeof(name_groups[g].pkey) - 1);
+            name_groups[g].pkey[sizeof(name_groups[g].pkey) - 1] = 0;
+            strncpy(name_groups[g].name, names[i], sizeof(name_groups[g].name) - 1);
+            name_groups[g].name[sizeof(name_groups[g].name) - 1] = 0;
+        }
+        if (name_groups[g].count < VOICE_MAX_UNITS)
+            name_groups[g].ids[name_groups[g].count++] = ids[i];
+    }
+
+    // 每组注册一条命令（命令词用组内第一个分机的原始中文名，便于用户口述）
+    for (int g = 0; g < name_group_count; g++) {
         char cmd_on[64];
         char cmd_off[64];
-        snprintf(cmd_on, sizeof(cmd_on), "打开%s", names[i]);
-        snprintf(cmd_off, sizeof(cmd_off), "关掉%s", names[i]);
-        esp_mn_commands_add(ids[i], cmd_on);          // 开：command_id = 分机 ID
-        esp_mn_commands_add(ids[i] | 0x100, cmd_off); // 关：command_id = 0x100 | 分机 ID
+        snprintf(cmd_on, sizeof(cmd_on), "打开%s", name_groups[g].name);
+        snprintf(cmd_off, sizeof(cmd_off), "关掉%s", name_groups[g].name);
+        esp_mn_commands_add(GROUP_ON_BASE + g, cmd_on);
+        esp_mn_commands_add(GROUP_OFF_BASE + g, cmd_off);
     }
 
     // 提交更新到识别引擎
     esp_mn_error_t *err = esp_mn_commands_update();
     if (err == NULL) {
-        ESP_LOGI(TAG, "Voice commands synced (%d units)", cnt);
+        ESP_LOGI(TAG, "Voice commands synced (%d units, %d groups)", cnt, name_group_count);
     } else {
         ESP_LOGW(TAG, "Sync errors: %d", err->num);
     }
