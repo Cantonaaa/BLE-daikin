@@ -124,6 +124,29 @@ static void voice_command_callback(int command_id)
 }
 
 /*
+ * 阿拉伯数字 -> 中文数字字符
+ * 用于注册语音命令词，确保 MultiNet 逐位拆解数字：
+ *   "空调10" -> "空调一零"（而非按数值读成"十"）
+ */
+static void digits_to_chinese(const char *src, char *dst, size_t dst_len)
+{
+    static const char *num[] = {"零","一","二","三","四","五","六","七","八","九"};
+    size_t o = 0;
+    for (const char *p = src; *p && o < dst_len - 1; p++) {
+        if (*p >= '0' && *p <= '9') {
+            const char *cn = num[*p - '0'];
+            size_t len = strlen(cn);
+            if (o + len >= dst_len) break;
+            memcpy(dst + o, cn, len);
+            o += len;
+        } else {
+            dst[o++] = *p;
+        }
+    }
+    dst[o] = 0;
+}
+
+/*
  * 同步语音命令列表
  * 每次分机改名后调用，重新生成语音命令注册表：
  *   - "打开空调" → 0xFFFF（全部开）
@@ -172,12 +195,14 @@ void voice_control_sync_commands(void)
             name_groups[g].ids[name_groups[g].count++] = ids[i];
     }
 
-    // 每组注册一条命令（命令词用组内第一个分机的原始中文名，便于用户口述）
+    // 每组注册一条命令（命令词用组内第一个分机的原始中文名，数字转中文保证逐位识别）
     for (int g = 0; g < name_group_count; g++) {
+        char voice_name[32];
+        digits_to_chinese(name_groups[g].name, voice_name, sizeof(voice_name));
         char cmd_on[64];
         char cmd_off[64];
-        snprintf(cmd_on, sizeof(cmd_on), "打开%s", name_groups[g].name);
-        snprintf(cmd_off, sizeof(cmd_off), "关掉%s", name_groups[g].name);
+        snprintf(cmd_on, sizeof(cmd_on), "打开%s", voice_name);
+        snprintf(cmd_off, sizeof(cmd_off), "关掉%s", voice_name);
         esp_mn_commands_add(GROUP_ON_BASE + g, cmd_on);
         esp_mn_commands_add(GROUP_OFF_BASE + g, cmd_off);
     }
