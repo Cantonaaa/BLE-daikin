@@ -139,7 +139,9 @@ static const char *WEB_HTML =
     "async function bleScan(){await fetch('/api/ble/scan');setTimeout(load,3000);}"
     "async function bleConnect(i){await fetch('/api/ble/connect?idx='+i);load();}"
     "async function toggle(id){await fetch('/api/toggle?id='+id);load();}"
-    "async function rename(id){let n=prompt('名称：');if(n)await fetch('/api/rename?id='+id+'&name='+encodeURIComponent(n));load();}"
+    "async function rename(id){let n=prompt('名称：');if(n){let r=await(await fetch('/api/rename?id='+id+'&name='+encodeURIComponent(n))).json();"
+    "if(r.ok){load();}else if(r.error==='no_english'){alert('名称不能包含英文，请输入中文');}"
+    "else{alert('改名失败，请重试');}}"
     "async function setTimer(id,on,v){let t=v.replace(':','');await fetch('/api/timer?id='+id+'&type='+(on?'timer_on':'timer_off')+'&val='+t);load();}"
     "async function entry(){let ws=await(await fetch('/api/wifi/status')).json();"
     "if(ws.connected)setInterval(load,5000);"
@@ -341,9 +343,22 @@ static esp_err_t rename_handler(httpd_req_t *req)
     char buf[128];
     if (httpd_req_get_url_query_str(req, buf, sizeof(buf)) == ESP_OK) {
         char id_str[4], name[64];
-        if (httpd_query_key_value(buf, "id", id_str, sizeof(id_str)) == ESP_OK &&
+        if (            httpd_query_key_value(buf, "id", id_str, sizeof(id_str)) == ESP_OK &&
             httpd_query_key_value(buf, "name", name, sizeof(name)) == ESP_OK) {
             int id = atoi(id_str);
+            /* 禁用英文：语音命令按拼音匹配，英文名无法识别 */
+            int has_eng = 0;
+            for (int k = 0; name[k]; k++) {
+                if ((name[k] >= 'a' && name[k] <= 'z') ||
+                    (name[k] >= 'A' && name[k] <= 'Z')) {
+                    has_eng = 1;
+                    break;
+                }
+            }
+            if (has_eng) {
+                httpd_resp_sendstr(req, "{\"ok\":0,\"error\":\"no_english\"}");
+                return ESP_OK;
+            }
             int found = -1;
             units_lock();
             for (int i = 0; i < unit_count; i++) {
