@@ -286,7 +286,7 @@ static int find_or_add_unit(uint8_t id)
     if (unit_count < MAX_UNITS) {
         int i = unit_count++;
         units[i].id = id;
-        snprintf(units[i].name, sizeof(units[i].name), "Unit %d", id);
+        snprintf(units[i].name, sizeof(units[i].name), "空调%d", i + 1);
         ESP_LOGI(TAG, "Unit %d discovered (0x%02x)", unit_count, id);
         units_unlock();
         return i;
