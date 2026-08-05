@@ -49,8 +49,8 @@
 
 | 版本 | 适用硬件 | Release |
 |---|---|---|
-| **核心版** | 任何 ESP32-S3 N16R8 | `v1.3.0` → `BLE-Daikin-N16R8-all.bin` |
-| **语音版** | 需外接 INMP441 I2S 麦克风 | `v1.3.1` → `BLE-Daikin-VoiceControl-all.bin` |
+| **核心版** | 任何 ESP32-S3 N16R8 | `v1.4.0` → `BLE-Daikin-N16R8-all.bin` |
+| **语音版** | 需外接 INMP441 I2S 麦克风 | `v1.4.1` → `BLE-Daikin-VoiceControl-all.bin` |
 
 语音版在核心版基础上增加了离线语音识别模块。不接麦克风时功能与核心版完全一致。
 
@@ -368,5 +368,7 @@ BLE-Daikin/
 | **v1.2.1** | `voice-control` | 语音版（基于 v1.2.0 + 语音模块） |
 | **v1.3.0** | `main` | 核心版（含 WiFi 配网改进） |
 | **v1.3.1** | `voice-control` | 语音版（基于 v1.3.0 + 语音模块） |
+| **v1.4.0** | `main` | 核心版（拼音分组 + 默认名空调1/2/3） |
+| **v1.4.1** | `voice-control` | 语音版（基于 v1.4.0 + 语音模块） |
 
 完整 Release 列表见 https://github.com/Cantonaaa/BLE-daikin/releases
