@@ -27,6 +27,24 @@ static const char *pinyin_lookup(uint32_t cp)
     return NULL;
 }
 
+/* 阿拉伯数字 -> 拼音（带声调） */
+static const char *digit_pinyin(char c)
+{
+    switch (c) {
+        case '0': return "líng";
+        case '1': return "yī";
+        case '2': return "èr";
+        case '3': return "sān";
+        case '4': return "sì";
+        case '5': return "wǔ";
+        case '6': return "liù";
+        case '7': return "qī";
+        case '8': return "bā";
+        case '9': return "jiǔ";
+        default:  return NULL;
+    }
+}
+
 /* UTF-8 首字节 -> 字符长度，非法返回 -1 */
 static int utf8_char_len(unsigned char c)
 {
@@ -64,49 +82,61 @@ static int utf8_decode(const char *s, uint32_t *cp)
 
 /*
  * 将 UTF-8 名称转换为拼音 key。
- * - 全中文名：转拼音，字符间用空格分隔（如 "客"+"厅" -> "kè tīng"）
- * - 含英文/数字/标点：原样拷贝返回（降级）
+ * - 中文字符：转拼音
+ * - 阿拉伯数字：转拼音（如 "2" -> "èr"）
+ * - 含英文/标点等其他字符：原样拷贝返回（降级）
  */
 size_t pinyin_of_name(const char *utf8_name, char *out, size_t out_len)
 {
     size_t in_len = strlen(utf8_name);
     size_t i = 0, o = 0;
-    int all_chinese = 1;
+    int convertible = 1;
 
     if (!out || out_len == 0) return 0;
     out[0] = 0;
 
-    /* 第一遍：检查是否全为可转拼音的中文字符 */
+    /* 第一遍：检查是否全为可转拼音的字符（中文或阿拉伯数字） */
     while (i < in_len) {
+        unsigned char c = (unsigned char)utf8_name[i];
+        if (c >= '0' && c <= '9') { i++; continue; }       /* 数字 */
         uint32_t cp;
         int len = utf8_decode(utf8_name + i, &cp);
         if (len < 0 || cp < 0x4E00 || cp > 0x9FFF || pinyin_lookup(cp) == NULL) {
-            all_chinese = 0;
+            convertible = 0;
             break;
         }
         i += len;
     }
 
-    if (!all_chinese) {
+    if (!convertible) {
         strncpy(out, utf8_name, out_len - 1);
         out[out_len - 1] = 0;
         return strlen(out);
     }
 
-    /* 第二遍：逐字转拼音，空格分隔 */
+    /* 第二遍：逐字符转拼音，空格分隔 */
     i = 0;
     while (i < in_len) {
-        uint32_t cp;
-        int len = utf8_decode(utf8_name + i, &cp);
-        const char *py = pinyin_lookup(cp);
-        if (!py) { i += len; continue; }
+        unsigned char c = (unsigned char)utf8_name[i];
+        const char *py;
+        size_t clen;
+
+        if (c >= '0' && c <= '9') {
+            py = digit_pinyin((char)c);
+            clen = 1;
+        } else {
+            uint32_t cp;
+            clen = (size_t)utf8_decode(utf8_name + i, &cp);
+            py = pinyin_lookup(cp);
+        }
+        if (!py) { i += clen; continue; }
 
         size_t need = strlen(py);
-        if (o > 0 && o < out_len - 1) out[o++] = ' ';          /* 字间空格 */
+        if (o > 0 && o < out_len - 1) out[o++] = ' ';          /* 字符间空格 */
         if (o + need >= out_len) break;                        /* 防溢出 */
         memcpy(out + o, py, need);
         o += need;
-        i += len;
+        i += clen;
     }
     out[o] = 0;
     return o;
